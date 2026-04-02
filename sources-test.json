@@ -1,0 +1,8 @@
+[
+    {
+        "kind": "ods",
+        "type": "ra-ods",
+        "source": "hcro",
+        "url": "http://localhost:9999/ods.json"
+    }
+]

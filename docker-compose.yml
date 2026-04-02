@@ -1,0 +1,15 @@
+services:
+  zms-ra-ingest:
+    build: .
+    container_name: zms-ra-ingest
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./sources.json:/app/sources.json:ro
+    networks:
+      - zms-service-local-dev-net
+
+networks:
+  zms-service-local-dev-net:
+    external: true

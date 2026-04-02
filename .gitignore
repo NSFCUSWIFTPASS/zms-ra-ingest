@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.env
+
+# Virtual environments
+.venv/
+venv/
+
+# Hatch
+.hatch/
+
+# IDE
+.idea/
+.vscode/
+
+# Test/local
+.pytest_cache/
