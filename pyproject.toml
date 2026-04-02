@@ -5,7 +5,7 @@ description = "Ingests RA facility observation schedules into OpenZMS as claims"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "zmsclient",
+    "zms-client @ git+https://gitlab.flux.utah.edu/openzms/zms-client-py.git@d3dae358b605c45cb6818197fcc97f367e5d2dc9",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "httpx>=0.20.0,<0.28.0",
@@ -17,6 +17,9 @@ zms-ra-ingest = "ra_ingest.main:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ra_ingest"]
