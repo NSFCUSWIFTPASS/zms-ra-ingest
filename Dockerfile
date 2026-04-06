@@ -25,15 +25,16 @@ FROM python:3.11-slim as final
 
 WORKDIR /app
 
-RUN addgroup --system app && adduser --system --group --no-create-home --shell /bin/false --disabled-password app
+RUN apt-get update && apt-get install -y --no-install-recommends busybox-static \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /bin/busybox /usr/sbin/crond
 
 COPY --from=builder /opt/venv /opt/venv
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 ENV PATH="/opt/venv/bin:$PATH"
-
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-USER app
-
-CMD ["zms-ra-ingest"]
+ENTRYPOINT ["/app/entrypoint.sh"]

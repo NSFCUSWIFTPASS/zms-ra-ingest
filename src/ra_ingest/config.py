@@ -30,3 +30,20 @@ class Settings(BaseSettings):
         default="sources.json",
         description="Path to JSON file defining the RA data sources",
     )
+
+    # Email reports (optional)
+    report_enabled: bool = Field(
+        default=False, description="Enable daily email reports"
+    )
+    report_cron: str = Field(
+        default="0 8 * * *",
+        description="Cron schedule for reports (default: 8am daily)",
+    )
+    smtp_host: str = Field(default="", description="SMTP server host")
+    smtp_port: int = Field(default=587, description="SMTP server port")
+    smtp_user: str = Field(default="", description="SMTP username")
+    smtp_password: str = Field(default="", description="SMTP password")
+    report_from: str = Field(default="", description="From address for reports")
+    report_to: str = Field(
+        default="", description="Comma-separated recipient addresses"
+    )

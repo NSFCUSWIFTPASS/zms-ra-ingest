@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import signal
@@ -12,6 +13,7 @@ from zmsclient.zmc.client import ZmsZmcClient
 
 from .config import Settings
 from .reconciler import reconcile
+from .report import generate_report, send_report
 from .sources.ods import OdsSource
 
 SOURCE_REGISTRY: dict[str, type] = {
@@ -58,9 +60,24 @@ def _load_sources(settings: Settings) -> list:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="ZMS RA Facility Ingest Service")
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Send a daily report email and exit (no poll loop)",
+    )
+    args = parser.parse_args()
+
     settings = Settings()
 
     logging.basicConfig(format=LOG_FORMAT, level=settings.log_level, stream=sys.stderr)
+
+    if args.report:
+        client = ZmsZmcClient(base_url=settings.zmc_url, token=settings.token)
+        body = generate_report(client, settings.element_id)
+        send_report(settings, body)
+        return
+
     sources = _load_sources(settings)
     if not sources:
         LOG.error("No sources configured, exiting")
