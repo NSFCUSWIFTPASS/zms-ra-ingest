@@ -68,5 +68,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/nsfcuswiftpass/zms-ra-ingest:${{ github.ref_name }}
+            ghcr.io/nsfcuswiftpass/zms-ra-ingest:latest
