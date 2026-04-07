@@ -1,6 +1,6 @@
 services:
   zms-ra-ingest:
-    build: .
+    image: ghcr.io/nsfcuswiftpass/zms-ra-ingest:latest
     container_name: zms-ra-ingest
     restart: unless-stopped
     env_file:
