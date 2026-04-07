@@ -7,8 +7,8 @@ import datetime
 from unittest.mock import MagicMock
 
 from zmsclient.zmc.v1.models import ClaimList as RealClaimList
-from zmsclient.zmc.v1.models import Spectrum as RealSpectrum
 
+from ra_ingest.bootstrap import SpectrumManager
 from ra_ingest.reconciler import _claim_matches, _started, reconcile
 from ra_ingest.sources.protocol import Observation
 
@@ -80,18 +80,6 @@ def _make_client(existing_claims=None):
     list_resp.status_code = 200
     client.list_claims.return_value = list_resp
 
-    spectrum_constraint = MagicMock()
-    spectrum_constraint.min_freq = 1000
-    spectrum_constraint.max_freq = 2000
-    spectrum_constraint_wrapper = MagicMock()
-    spectrum_constraint_wrapper.constraint = spectrum_constraint
-    spectrum = MagicMock(spec=RealSpectrum)
-    spectrum.constraints = [spectrum_constraint_wrapper]
-    spec_resp = MagicMock()
-    spec_resp.is_success = True
-    spec_resp.parsed = spectrum
-    client.get_spectrum.return_value = spec_resp
-
     created_claim = MagicMock()
     created_claim.id = "new-claim-id"
     create_resp = MagicMock()
@@ -106,6 +94,13 @@ def _make_client(existing_claims=None):
     client.delete_claim.return_value = delete_resp
 
     return client
+
+
+def _make_spectrum_mgr():
+    """Create a mock SpectrumManager that always returns a spectrum_id."""
+    mgr = MagicMock(spec=SpectrumManager)
+    mgr.get_spectrum_id.return_value = "test-spectrum-id"
+    return mgr
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +205,7 @@ class TestReconcile:
         source = _make_source([obs])
         client = _make_client(existing_claims=[])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.created == 1
         assert stats.deleted == 0
@@ -223,7 +218,7 @@ class TestReconcile:
         source = _make_source([obs])
         client = _make_client(existing_claims=[claim])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.created == 0
         assert stats.deleted == 0
@@ -241,7 +236,7 @@ class TestReconcile:
         source = _make_source([])
         client = _make_client(existing_claims=[claim])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.deleted == 1
         client.delete_claim.assert_called_once_with(claim_id="claim-obs-cancelled")
@@ -254,7 +249,7 @@ class TestReconcile:
         source = _make_source([])
         client = _make_client(existing_claims=[claim])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.unchanged == 1
@@ -268,7 +263,7 @@ class TestReconcile:
         source = _make_source([])
         client = _make_client(existing_claims=[claim])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.unchanged == 1
@@ -283,7 +278,7 @@ class TestReconcile:
         source = _make_source([new_obs])
         client = _make_client(existing_claims=[claim])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.deleted == 1
         assert stats.created == 1
@@ -297,7 +292,7 @@ class TestReconcile:
         source = _make_source([new_obs])
         client = _make_client(existing_claims=[claim])
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.created == 0
@@ -329,7 +324,7 @@ class TestReconcile:
             existing_claims=[claim_existing, claim_cancelled, claim_past]
         )
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.created == 1  # obs-new
         assert stats.deleted == 1  # obs-cancelled (future, not in source)
@@ -345,7 +340,7 @@ class TestReconcile:
         fail_resp.status_code = 500
         client.create_claim.return_value = fail_resp
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.errors == 1
         assert stats.created == 0
@@ -362,7 +357,7 @@ class TestReconcile:
         fail_resp.status_code = 500
         client.delete_claim.return_value = fail_resp
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.errors == 1
         assert stats.deleted == 0
@@ -374,7 +369,7 @@ class TestReconcile:
         client = _make_client(existing_claims=[])
         client.create_claim.side_effect = RuntimeError("boom")
 
-        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
 
         assert stats.errors == 1
         assert stats.created == 0

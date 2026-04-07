@@ -1,32 +1,17 @@
-"""Tests for the spectrum bootstrap logic."""
+"""Tests for the spectrum manager bootstrap logic."""
 
 from unittest.mock import MagicMock
 
 from zmsclient.zmc.v1.models import Spectrum as RealSpectrum
 from zmsclient.zmc.v1.models import SpectrumList as RealSpectrumList
 
-from ra_ingest.bootstrap import SPECTRUM_EXT_ID_PREFIX, ensure_spectrum
+from ra_ingest.bootstrap import EXT_ID_PREFIX, SpectrumManager
 
 
-def _make_settings(
-    element_id="elem-1",
-    spectrum_name="ATA L-band",
-    min_freq=1000000000,
-    max_freq=2000000000,
-):
-    settings = MagicMock()
-    settings.element_id = element_id
-    settings.spectrum_name = spectrum_name
-    settings.spectrum_min_freq_hz = min_freq
-    settings.spectrum_max_freq_hz = max_freq
-    return settings
-
-
-def _make_client(existing_spectrum=None):
+def _make_client(existing_spectra=None):
     client = MagicMock()
 
-    # list_spectrum response
-    spectra = existing_spectrum or []
+    spectra = existing_spectra or []
     spectrum_list = MagicMock(spec=RealSpectrumList)
     spectrum_list.spectrum = spectra
 
@@ -35,7 +20,6 @@ def _make_client(existing_spectrum=None):
     list_resp.parsed = spectrum_list
     client.list_spectrum.return_value = list_resp
 
-    # create_spectrum response
     created = MagicMock(spec=RealSpectrum)
     created.id = "new-spectrum-id"
     create_resp = MagicMock()
@@ -46,94 +30,94 @@ def _make_client(existing_spectrum=None):
     return client
 
 
-class TestEnsureSpectrum:
-    def test_creates_when_none_exists(self):
-        """No existing spectrum -> creates one."""
-        client = _make_client(existing_spectrum=[])
-        settings = _make_settings()
+def _make_existing_spectrum(band_name):
+    s = MagicMock()
+    s.id = f"spectrum-{band_name}"
+    s.ext_id = f"{EXT_ID_PREFIX}:{band_name}"
+    s.deleted_at = None
+    return s
 
-        result = ensure_spectrum(client, settings)
+
+class TestSpectrumManager:
+    def test_creates_spectrum_for_new_band(self):
+        client = _make_client()
+        mgr = SpectrumManager(client, "elem-1")
+
+        result = mgr.get_spectrum_id(1500000000, 1600000000)
 
         assert result == "new-spectrum-id"
         client.create_spectrum.assert_called_once()
 
-        # Verify the spectrum object passed to create
-        call_kwargs = client.create_spectrum.call_args
-        spectrum = call_kwargs.kwargs.get("body") or call_kwargs[1].get("body")
-        assert spectrum.element_id == "elem-1"
-        assert spectrum.name == "ATA L-band"
-        assert spectrum.starts_at is not None
+    def test_reuses_existing_spectrum(self):
+        existing = _make_existing_spectrum("L-band")
+        client = _make_client(existing_spectra=[existing])
+        mgr = SpectrumManager(client, "elem-1")
 
-    def test_finds_existing_by_ext_id(self):
-        """Existing spectrum with matching ext_id -> reuses it."""
-        existing = MagicMock()
-        existing.id = "existing-spectrum-id"
-        existing.name = "ATA L-band"
-        existing.ext_id = f"{SPECTRUM_EXT_ID_PREFIX}:ATA L-band"
-        existing.deleted_at = None
+        result = mgr.get_spectrum_id(1500000000, 1600000000)
 
-        client = _make_client(existing_spectrum=[existing])
-        settings = _make_settings()
+        assert result == "spectrum-L-band"
+        client.create_spectrum.assert_not_called()
 
-        result = ensure_spectrum(client, settings)
+    def test_caches_after_create(self):
+        client = _make_client()
+        mgr = SpectrumManager(client, "elem-1")
 
-        assert result == "existing-spectrum-id"
+        result1 = mgr.get_spectrum_id(1500000000, 1600000000)
+        result2 = mgr.get_spectrum_id(1900000000, 1995000000)
+
+        assert result1 == result2 == "new-spectrum-id"
+        client.create_spectrum.assert_called_once()  # only created once
+
+    def test_different_bands_get_different_spectra(self):
+        client = _make_client()
+        mgr = SpectrumManager(client, "elem-1")
+
+        mgr.get_spectrum_id(1500000000, 1600000000)  # L-band
+        mgr.get_spectrum_id(3000000000, 3500000000)  # S-band
+
+        assert client.create_spectrum.call_count == 2
+
+    def test_returns_none_for_unknown_band(self):
+        client = _make_client()
+        mgr = SpectrumManager(client, "elem-1")
+
+        result = mgr.get_spectrum_id(50000000000, 60000000000)  # 50-60 GHz
+
+        assert result is None
         client.create_spectrum.assert_not_called()
 
     def test_ignores_deleted_spectrum(self):
-        """Deleted spectrum with matching ext_id -> creates new one."""
-        deleted = MagicMock()
-        deleted.id = "deleted-spectrum-id"
-        deleted.name = "ATA L-band"
-        deleted.ext_id = f"{SPECTRUM_EXT_ID_PREFIX}:ATA L-band"
+        deleted = _make_existing_spectrum("L-band")
         deleted.deleted_at = "2026-01-01T00:00:00Z"
+        client = _make_client(existing_spectra=[deleted])
+        mgr = SpectrumManager(client, "elem-1")
 
-        client = _make_client(existing_spectrum=[deleted])
-        settings = _make_settings()
-
-        result = ensure_spectrum(client, settings)
+        result = mgr.get_spectrum_id(1500000000, 1600000000)
 
         assert result == "new-spectrum-id"
         client.create_spectrum.assert_called_once()
 
-    def test_ignores_different_ext_id(self):
-        """Existing spectrum with different ext_id -> creates new one."""
+    def test_ignores_non_ra_ingest_spectrum(self):
         other = MagicMock()
-        other.id = "other-spectrum-id"
-        other.name = "ISM-915"
+        other.id = "other-spectrum"
         other.ext_id = "something-else"
         other.deleted_at = None
+        client = _make_client(existing_spectra=[other])
+        mgr = SpectrumManager(client, "elem-1")
 
-        client = _make_client(existing_spectrum=[other])
-        settings = _make_settings()
-
-        result = ensure_spectrum(client, settings)
+        result = mgr.get_spectrum_id(1500000000, 1600000000)
 
         assert result == "new-spectrum-id"
         client.create_spectrum.assert_called_once()
 
-    def test_raises_on_create_failure(self):
-        """Create fails -> raises RuntimeError."""
-        client = _make_client(existing_spectrum=[])
+    def test_create_failure_returns_none(self):
+        client = _make_client()
         fail_resp = MagicMock()
         fail_resp.is_success = False
         fail_resp.status_code = 500
         client.create_spectrum.return_value = fail_resp
+        mgr = SpectrumManager(client, "elem-1")
 
-        settings = _make_settings()
+        result = mgr.get_spectrum_id(1500000000, 1600000000)
 
-        import pytest
-
-        with pytest.raises(RuntimeError, match="500"):
-            ensure_spectrum(client, settings)
-
-    def test_ext_id_includes_spectrum_name(self):
-        """ext_id is derived from spectrum_name for uniqueness."""
-        client = _make_client(existing_spectrum=[])
-        settings = _make_settings(spectrum_name="Custom Band")
-
-        ensure_spectrum(client, settings)
-
-        call_kwargs = client.create_spectrum.call_args
-        spectrum = call_kwargs.kwargs.get("body") or call_kwargs[1].get("body")
-        assert spectrum.ext_id == f"{SPECTRUM_EXT_ID_PREFIX}:Custom Band"
+        assert result is None

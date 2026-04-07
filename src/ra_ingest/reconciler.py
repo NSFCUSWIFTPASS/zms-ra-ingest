@@ -21,6 +21,7 @@ from zmsclient.zmc.v1.models import (
     GrantConstraint,
 )
 
+from .bootstrap import SpectrumManager
 from .sources.protocol import Observation, RASource
 
 LOG = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def reconcile(
     client: ZmsZmcClient,
     source: RASource,
     element_id: str,
-    spectrum_id: str,
+    spectrum_mgr: SpectrumManager,
     now: datetime.datetime | None = None,
 ) -> ReconcileStats:
     """Run one reconciliation cycle for a single source."""
@@ -51,7 +52,7 @@ def reconcile(
     }
 
     for ext_id in desired.keys() - current.keys():
-        _try_create(client, desired[ext_id], source, element_id, spectrum_id, stats)
+        _try_create(client, desired[ext_id], source, element_id, spectrum_mgr, stats)
 
     for ext_id in current.keys() - desired.keys():
         claim = current[ext_id]
@@ -68,7 +69,7 @@ def reconcile(
                 stats.unchanged += 1
             else:
                 _try_delete(client, claim, stats)
-                _try_create(client, obs, source, element_id, spectrum_id, stats)
+                _try_create(client, obs, source, element_id, spectrum_mgr, stats)
         else:
             stats.unchanged += 1
 
@@ -80,10 +81,15 @@ def _try_create(
     obs: Observation,
     source: RASource,
     element_id: str,
-    spectrum_id: str,
+    spectrum_mgr: SpectrumManager,
     stats: ReconcileStats,
 ) -> None:
     try:
+        spectrum_id = spectrum_mgr.get_spectrum_id(obs.min_freq_hz, obs.max_freq_hz)
+        if spectrum_id is None:
+            stats.errors += 1
+            return
+
         claim = _build_claim(obs, source, element_id, spectrum_id)
         resp = client.create_claim(body=claim)
         if resp.is_success:

@@ -1,4 +1,9 @@
-"""Ensures required ZMS resources (spectrum) exist on startup."""
+"""Manages spectrum resources in ZMS, one per radio band.
+
+On startup, loads existing spectra created by this service. When the
+reconciler needs a spectrum for a given frequency range, it calls
+get_spectrum_id() which returns an existing one or creates it.
+"""
 
 from __future__ import annotations
 
@@ -15,75 +20,101 @@ from zmsclient.zmc.v1.models import (
     SpectrumList,
 )
 
-from .config import Settings
+from .bands import Band, find_band_for_range
 
 LOG = logging.getLogger(__name__)
 
-# Used as ext_id to find our spectrum across restarts.
-SPECTRUM_EXT_ID_PREFIX = "ra-ingest"
+EXT_ID_PREFIX = "ra-ingest"
 
 
-def ensure_spectrum(client: ZmsZmcClient, settings: Settings) -> str:
-    """Find or create the spectrum for this ingest service. Returns spectrum_id."""
-    ext_id = f"{SPECTRUM_EXT_ID_PREFIX}:{settings.spectrum_name}"
+class SpectrumManager:
+    """Lazily creates and caches spectrum resources, one per band."""
 
-    # Check if it already exists
-    resp = client.list_spectrum(
-        element_id=settings.element_id,
-        items_per_page=100,
-        x_api_elaborate="True",
-    )
-    if resp.is_success and isinstance(resp.parsed, SpectrumList):
+    def __init__(self, client: ZmsZmcClient, element_id: str) -> None:
+        self._client = client
+        self._element_id = element_id
+        self._cache: dict[str, str] = {}  # band name -> spectrum_id
+        self._load_existing()
+
+    def _load_existing(self) -> None:
+        """Load spectra previously created by this service."""
+        resp = self._client.list_spectrum(
+            element_id=self._element_id,
+            items_per_page=100,
+            x_api_elaborate="True",
+        )
+        if not resp.is_success or not isinstance(resp.parsed, SpectrumList):
+            LOG.warning("Could not list existing spectra")
+            return
         for s in resp.parsed.spectrum:
-            if s.ext_id == ext_id and not s.deleted_at:
-                LOG.info("Found existing spectrum %s (%s)", s.id, s.name)
-                return str(s.id)
+            if s.ext_id and s.ext_id.startswith(EXT_ID_PREFIX) and not s.deleted_at:
+                band_name = s.ext_id.removeprefix(f"{EXT_ID_PREFIX}:")
+                self._cache[band_name] = str(s.id)
+                LOG.info("Found existing spectrum %s (%s)", s.id, band_name)
 
-    # Create it
-    LOG.info(
-        "Creating spectrum '%s' (%d-%d Hz)",
-        settings.spectrum_name,
-        settings.spectrum_min_freq_hz,
-        settings.spectrum_max_freq_hz,
-    )
-    spectrum = Spectrum(
-        element_id=settings.element_id,
-        name=settings.spectrum_name,
-        starts_at=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
-        ext_id=ext_id,
-        url="https://ods.hcro.org",
-        description=f"Auto-created by zms-ra-ingest for {settings.spectrum_name}",
-        enabled=True,
-        constraints=[
-            SpectrumConstraint(
-                constraint=Constraint(
-                    min_freq=settings.spectrum_min_freq_hz,
-                    max_freq=settings.spectrum_max_freq_hz,
-                    max_eirp=0,
-                    exclusive=True,
+    def get_spectrum_id(self, min_freq_hz: int, max_freq_hz: int) -> str | None:
+        """Get or create a spectrum for the band containing this freq range."""
+        band = find_band_for_range(min_freq_hz, max_freq_hz)
+        if band is None:
+            LOG.error(
+                "No band covers %d-%d Hz, cannot create claim", min_freq_hz, max_freq_hz
+            )
+            return None
+
+        if band.name in self._cache:
+            return self._cache[band.name]
+
+        return self._create_spectrum(band)
+
+    def _create_spectrum(self, band: Band) -> str | None:
+        """Create a spectrum resource for a band."""
+        ext_id = f"{EXT_ID_PREFIX}:{band.name}"
+        LOG.info(
+            "Creating spectrum '%s' (%d-%d Hz)",
+            band.name,
+            band.min_freq_hz,
+            band.max_freq_hz,
+        )
+
+        spectrum = Spectrum(
+            element_id=self._element_id,
+            name=band.name,
+            starts_at=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+            ext_id=ext_id,
+            url="https://ods.hcro.org",
+            description=f"Auto-created by zms-ra-ingest for {band.name}",
+            enabled=True,
+            constraints=[
+                SpectrumConstraint(
+                    constraint=Constraint(
+                        min_freq=band.min_freq_hz,
+                        max_freq=band.max_freq_hz,
+                        max_eirp=0,
+                        exclusive=True,
+                    )
                 )
-            )
-        ],
-        policies=[
-            Policy(
-                element_id=settings.element_id,
-                allowed=True,
-                auto_approve=True,
-                priority=1023,
-                allow_skip_acks=True,
-                allow_inactive=False,
-                allow_conflicts=False,
-                when_unoccupied=False,
-                disable_emit_check=True,
-            )
-        ],
-    )
+            ],
+            policies=[
+                Policy(
+                    element_id=self._element_id,
+                    allowed=True,
+                    auto_approve=True,
+                    priority=1023,
+                    allow_skip_acks=True,
+                    allow_inactive=False,
+                    allow_conflicts=False,
+                    when_unoccupied=False,
+                    disable_emit_check=True,
+                )
+            ],
+        )
 
-    resp = client.create_spectrum(body=spectrum)
-    if resp.is_success:
-        created = cast(Spectrum, resp.parsed)
-        LOG.info("Created spectrum %s", created.id)
-        return str(created.id)
+        resp = self._client.create_spectrum(body=spectrum)
+        if resp.is_success:
+            created = cast(Spectrum, resp.parsed)
+            self._cache[band.name] = str(created.id)
+            LOG.info("Created spectrum %s for %s", created.id, band.name)
+            return str(created.id)
 
-    LOG.error("Failed to create spectrum: %s", resp.status_code)
-    raise RuntimeError(f"Could not create spectrum: {resp.status_code}")
+        LOG.error("Failed to create spectrum for %s: %s", band.name, resp.status_code)
+        return None

@@ -11,7 +11,7 @@ import time
 
 from zmsclient.zmc.client import ZmsZmcClient
 
-from .bootstrap import ensure_spectrum
+from .bootstrap import SpectrumManager
 from .config import Settings
 from .reconciler import reconcile
 from .report import generate_report, send_report
@@ -73,8 +73,12 @@ def main():
 
     logging.basicConfig(format=LOG_FORMAT, level=settings.log_level, stream=sys.stderr)
 
+    client = ZmsZmcClient(
+        base_url=settings.zmc_url,
+        token=settings.token,
+    )
+
     if args.report:
-        client = ZmsZmcClient(base_url=settings.zmc_url, token=settings.token)
         body = generate_report(client, settings.element_id)
         send_report(settings, body)
         return
@@ -90,12 +94,7 @@ def main():
         settings.poll_interval_seconds,
     )
 
-    client = ZmsZmcClient(
-        base_url=settings.zmc_url,
-        token=settings.token,
-    )
-
-    spectrum_id = ensure_spectrum(client, settings)
+    spectrum_mgr = SpectrumManager(client, settings.element_id)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -112,7 +111,7 @@ def main():
                     client=client,
                     source=source,
                     element_id=settings.element_id,
-                    spectrum_id=spectrum_id,
+                    spectrum_mgr=spectrum_mgr,
                 )
                 LOG.info(
                     "Reconcile done: created=%d deleted=%d unchanged=%d errors=%d",

@@ -17,18 +17,6 @@ class Settings(BaseSettings):
     # Claim identity
     element_id: str = Field(description="Element UUID for the RA facility")
 
-    # Spectrum - auto-created on startup if it doesn't exist
-    spectrum_name: str = Field(
-        default="ATA L-band",
-        description="Name for the auto-created spectrum",
-    )
-    spectrum_min_freq_hz: int = Field(
-        default=1000000000, description="Spectrum lower bound in Hz"
-    )
-    spectrum_max_freq_hz: int = Field(
-        default=2000000000, description="Spectrum upper bound in Hz"
-    )
-
     # Poll behavior
     poll_interval_seconds: int = Field(
         default=300, description="Seconds between poll cycles"
