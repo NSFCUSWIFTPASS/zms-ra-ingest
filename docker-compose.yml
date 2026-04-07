@@ -7,6 +7,9 @@ services:
       - .env
     volumes:
       - ./sources.json:/app/sources.json:ro
+      - /zms/certs/intermediate-g2.crt:/usr/local/share/ca-certificates/intermediate-g2.crt:ro
+    environment:
+      - SSL_CERT_FILE=/usr/local/share/ca-certificates/intermediate-g2.crt
     networks:
       - zms-service-local-dev-net
 
