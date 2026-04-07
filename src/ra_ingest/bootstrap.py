@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import cast
 
@@ -48,6 +49,7 @@ def ensure_spectrum(client: ZmsZmcClient, settings: Settings) -> str:
     spectrum = Spectrum(
         element_id=settings.element_id,
         name=settings.spectrum_name,
+        starts_at=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
         ext_id=ext_id,
         url="https://ods.hcro.org",
         description=f"Auto-created by zms-ra-ingest for {settings.spectrum_name}",
