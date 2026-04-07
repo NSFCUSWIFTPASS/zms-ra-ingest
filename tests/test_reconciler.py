@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 from zmsclient.zmc.v1.models import ClaimList as RealClaimList
 from zmsclient.zmc.v1.models import Spectrum as RealSpectrum
 
-from ra_ingest.reconciler import _claim_needs_update, _is_future_claim, reconcile
+from ra_ingest.reconciler import _claim_matches, _started, reconcile
 from ra_ingest.sources.protocol import Observation
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,7 @@ def _make_source(observations, source_type="ra-ods", source_name="hcro"):
     source = MagicMock()
     source.source_type = source_type
     source.source_name = source_name
+    source.priority = 1023
     source.fetch_observations.return_value = observations
     return source
 
@@ -67,7 +68,6 @@ def _make_client(existing_claims=None):
     """Create a mock ZMS client with list_claims and create/delete stubs."""
     client = MagicMock()
 
-    # list_claims returns a real ClaimList so isinstance checks pass
     claims = existing_claims or []
     claim_list = MagicMock(spec=RealClaimList)
     claim_list.claims = claims
@@ -80,7 +80,6 @@ def _make_client(existing_claims=None):
     list_resp.status_code = 200
     client.list_claims.return_value = list_resp
 
-    # get_spectrum returns a real Spectrum so isinstance checks pass
     spectrum_constraint = MagicMock()
     spectrum_constraint.min_freq = 1000
     spectrum_constraint.max_freq = 2000
@@ -93,7 +92,6 @@ def _make_client(existing_claims=None):
     spec_resp.parsed = spectrum
     client.get_spectrum.return_value = spec_resp
 
-    # create_claim succeeds
     created_claim = MagicMock()
     created_claim.id = "new-claim-id"
     create_resp = MagicMock()
@@ -102,7 +100,6 @@ def _make_client(existing_claims=None):
     create_resp.status_code = 201
     client.create_claim.return_value = create_resp
 
-    # delete_claim succeeds
     delete_resp = MagicMock()
     delete_resp.is_success = True
     delete_resp.status_code = 200
@@ -112,18 +109,18 @@ def _make_client(existing_claims=None):
 
 
 # ---------------------------------------------------------------------------
-# _is_future_claim tests
+# _started tests
 # ---------------------------------------------------------------------------
 
 
-class TestIsFutureClaim:
+class TestStarted:
     def test_future_claim(self):
         claim = _make_claim(
             "x",
             starts_at=NOW + datetime.timedelta(hours=1),
             expires_at=NOW + datetime.timedelta(hours=2),
         )
-        assert _is_future_claim(claim, NOW) is True
+        assert _started(claim, NOW) is False
 
     def test_past_claim(self):
         claim = _make_claim(
@@ -131,7 +128,7 @@ class TestIsFutureClaim:
             starts_at=NOW - datetime.timedelta(hours=2),
             expires_at=NOW - datetime.timedelta(hours=1),
         )
-        assert _is_future_claim(claim, NOW) is False
+        assert _started(claim, NOW) is True
 
     def test_active_claim(self):
         claim = _make_claim(
@@ -139,30 +136,38 @@ class TestIsFutureClaim:
             starts_at=NOW - datetime.timedelta(hours=1),
             expires_at=NOW + datetime.timedelta(hours=1),
         )
-        assert _is_future_claim(claim, NOW) is False
+        assert _started(claim, NOW) is True
 
     def test_claim_starting_exactly_now(self):
         claim = _make_claim(
             "x", starts_at=NOW, expires_at=NOW + datetime.timedelta(hours=1)
         )
-        assert _is_future_claim(claim, NOW) is False
+        assert _started(claim, NOW) is True
 
     def test_claim_with_no_grant(self):
         claim = MagicMock()
         claim.grant = None
-        assert _is_future_claim(claim, NOW) is True
+        claim.id = "bad-claim"
+        assert _started(claim, NOW) is True
+
+    def test_claim_with_no_starts_at(self):
+        claim = MagicMock()
+        claim.grant = MagicMock()
+        claim.grant.starts_at = None
+        claim.id = "bad-claim"
+        assert _started(claim, NOW) is True
 
 
 # ---------------------------------------------------------------------------
-# _claim_needs_update tests
+# _claim_matches tests
 # ---------------------------------------------------------------------------
 
 
-class TestClaimNeedsUpdate:
+class TestClaimMatches:
     def test_identical(self):
         obs = _make_obs("x", start_offset_hours=1, end_offset_hours=2)
         claim = _make_claim("x", starts_at=obs.start, expires_at=obs.end)
-        assert _claim_needs_update(claim, obs) is False
+        assert _claim_matches(claim, obs) is True
 
     def test_time_changed(self):
         obs = _make_obs("x", start_offset_hours=1, end_offset_hours=2)
@@ -171,20 +176,26 @@ class TestClaimNeedsUpdate:
             starts_at=obs.start,
             expires_at=obs.end + datetime.timedelta(minutes=30),
         )
-        assert _claim_needs_update(claim, obs) is True
+        assert _claim_matches(claim, obs) is False
 
     def test_freq_changed(self):
         obs = _make_obs("x", min_freq=1990, max_freq=1995)
         claim = _make_claim(
             "x", starts_at=obs.start, expires_at=obs.end, min_freq=1990, max_freq=2000
         )
-        assert _claim_needs_update(claim, obs) is True
+        assert _claim_matches(claim, obs) is False
 
     def test_no_grant(self):
         obs = _make_obs("x")
         claim = MagicMock()
         claim.grant = None
-        assert _claim_needs_update(claim, obs) is True
+        assert _claim_matches(claim, obs) is False
+
+    def test_no_constraints(self):
+        obs = _make_obs("x")
+        claim = _make_claim("x", starts_at=obs.start, expires_at=obs.end)
+        claim.grant.constraints = []
+        assert _claim_matches(claim, obs) is False
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +238,7 @@ class TestReconcile:
         claim = _make_claim(
             "obs-cancelled", starts_at=future_start, expires_at=future_end
         )
-        source = _make_source([])  # source returns nothing
+        source = _make_source([])
         client = _make_client(existing_claims=[claim])
 
         stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
@@ -281,7 +292,6 @@ class TestReconcile:
         """Source shows different time for an already-started claim -> leave it."""
         active_start = NOW - datetime.timedelta(hours=1)
         active_end = NOW + datetime.timedelta(hours=1)
-        # Source says different end time
         new_obs = _make_obs("obs-active", start_offset_hours=-1, end_offset_hours=2)
         claim = _make_claim("obs-active", starts_at=active_start, expires_at=active_end)
         source = _make_source([new_obs])
@@ -324,3 +334,47 @@ class TestReconcile:
         assert stats.created == 1  # obs-new
         assert stats.deleted == 1  # obs-cancelled (future, not in source)
         assert stats.unchanged == 2  # obs-existing (matched) + obs-past (kept)
+
+    def test_create_error_doesnt_crash(self):
+        """API error on create -> stats.errors incremented, loop continues."""
+        obs = _make_obs("obs-1")
+        source = _make_source([obs])
+        client = _make_client(existing_claims=[])
+        fail_resp = MagicMock()
+        fail_resp.is_success = False
+        fail_resp.status_code = 500
+        client.create_claim.return_value = fail_resp
+
+        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+
+        assert stats.errors == 1
+        assert stats.created == 0
+
+    def test_delete_error_doesnt_crash(self):
+        """API error on delete -> stats.errors incremented, loop continues."""
+        future_start = NOW + datetime.timedelta(hours=3)
+        future_end = NOW + datetime.timedelta(hours=4)
+        claim = _make_claim("obs-1", starts_at=future_start, expires_at=future_end)
+        source = _make_source([])
+        client = _make_client(existing_claims=[claim])
+        fail_resp = MagicMock()
+        fail_resp.is_success = False
+        fail_resp.status_code = 500
+        client.delete_claim.return_value = fail_resp
+
+        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+
+        assert stats.errors == 1
+        assert stats.deleted == 0
+
+    def test_create_exception_doesnt_crash(self):
+        """Exception during create -> stats.errors incremented, loop continues."""
+        obs = _make_obs("obs-1")
+        source = _make_source([obs])
+        client = _make_client(existing_claims=[])
+        client.create_claim.side_effect = RuntimeError("boom")
+
+        stats = reconcile(client, source, "elem-1", "spec-1", now=NOW)
+
+        assert stats.errors == 1
+        assert stats.created == 0
