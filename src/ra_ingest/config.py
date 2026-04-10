@@ -28,6 +28,35 @@ class Settings(BaseSettings):
         description="Path to JSON file defining the RA data sources",
     )
 
+    # Google Calendar sync (optional)
+    gcal_enabled: bool = Field(
+        default=False, description="Enable Google Calendar grant/claim sync"
+    )
+    gcal_cron: str = Field(
+        default="*/5 * * * *",
+        description="Cron schedule for calendar sync (default: every 5 min)",
+    )
+    gcal_calendar_id: str = Field(default="", description="Google Calendar ID")
+    gcal_calendar_token: str = Field(default="", description="Google Calendar API key")
+    gcal_spectrum_id: str = Field(
+        default="", description="Spectrum ID for calendar claims"
+    )
+    gcal_min_freq: float = Field(
+        default=1000, description="Min frequency (MHz) for calendar claims"
+    )
+    gcal_max_freq: float = Field(
+        default=2000, description="Max frequency (MHz) for calendar claims"
+    )
+    gcal_filter_exc: str = Field(
+        default="", description="Comma-separated regexps to exclude calendar events"
+    )
+    gcal_filter_inc: str = Field(
+        default="", description="Comma-separated regexps to include calendar events"
+    )
+    gcal_verify_ssl: bool = Field(
+        default=True, description="Verify SSL for ZMC connection from gcal sync"
+    )
+
     # Email reports (optional)
     report_enabled: bool = Field(
         default=False, description="Enable daily email reports"
