@@ -40,13 +40,10 @@ class OdsSource:
         source_type: str,
         source_name: str,
         url: str,
-        priority: int = 1023,
-        **kwargs,
     ) -> None:
         self._url = url
         self._source_type = source_type
         self._source_name = source_name
-        self._priority = priority
         self._client = httpx.Client(timeout=30.0)
 
     @property
@@ -56,10 +53,6 @@ class OdsSource:
     @property
     def source_name(self) -> str:
         return self._source_name
-
-    @property
-    def priority(self) -> int:
-        return self._priority
 
     def fetch_observations(self) -> list[Observation]:
         try:
@@ -94,7 +87,7 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
 
     site_id = item.get("site_id", "")
     src_id = item.get("src_id", "")
-    subarray = item.get("subarray", 0)
+    subarray = int(item.get("subarray", 0))
 
     # Build a stable ext_id from the fields that uniquely identify this observation.
     # ODS doesn't have an explicit ID, so we compose one.
@@ -108,4 +101,16 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
         min_freq_hz=int(item["freq_lower_hz"]),
         max_freq_hz=int(item["freq_upper_hz"]),
         description=f"site={site_id} src={src_id} subarray={subarray}",
+        site_id=site_id,
+        site_lat=float(item.get("site_lat_deg", 0) or 0),
+        site_lon=float(item.get("site_lon_deg", 0) or 0),
+        site_elevation=float(item.get("site_el_m", 0) or 0),
+        source_id=src_id,
+        ra_j2000_deg=float(item.get("src_ra_j2000_deg", 0) or 0),
+        dec_j2000_deg=float(item.get("src_dec_j2000_deg", 0) or 0),
+        slew_sec=float(item.get("slew_sec", 1) or 1),
+        corr_int_sec=float(item.get("corr_integ_time_sec", 1) or 1),
+        trk_rate_ra=item.get("trk_rate_ra_deg_per_sec"),
+        trk_rate_dec=item.get("trk_rate_dec_deg_per_sec"),
+        subarray=subarray,
     )

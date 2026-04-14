@@ -9,8 +9,9 @@ from typing import Protocol
 class Observation:
     """A scheduled RA observation from an external source.
 
-    This is the common representation that all sources produce.
-    The reconciler turns these into ZMS Claims.
+    This is the common representation that all sources produce. The
+    reconciler POSTs these into zms-ra as RAObservation records, attached
+    to the matching gcal grant.
     """
 
     ext_id: str
@@ -19,9 +20,22 @@ class Observation:
     end: datetime.datetime
     min_freq_hz: int
     max_freq_hz: int
-    # Optional - sources may provide these
+
     description: str = ""
-    max_eirp: float = 0.0
+
+    # ODS-specific fields for the zms-ra RAObservation model
+    site_id: str = ""
+    site_lat: float = 0.0
+    site_lon: float = 0.0
+    site_elevation: float = 0.0
+    source_id: str = ""
+    ra_j2000_deg: float = 0.0
+    dec_j2000_deg: float = 0.0
+    slew_sec: float = 1.0
+    corr_int_sec: float = 1.0
+    trk_rate_ra: float | None = None
+    trk_rate_dec: float | None = None
+    subarray: int = 0
 
 
 class RASource(Protocol):
@@ -29,23 +43,18 @@ class RASource(Protocol):
 
     @property
     def source_type(self) -> str:
-        """The claim 'type' field, e.g. 'ra-calendar'."""
+        """The source type identifier, e.g. 'ra-ods'."""
         ...
 
     @property
     def source_name(self) -> str:
-        """The claim 'source' field, e.g. 'hcro'."""
-        ...
-
-    @property
-    def priority(self) -> int:
-        """Grant priority for claims from this source. Range: -1023 to 1023."""
+        """The facility identifier, e.g. 'hcro'."""
         ...
 
     def fetch_observations(self) -> list[Observation]:
         """Fetch current observations from this source.
 
-        Returns all observations that should currently have claims in ZMS.
+        Returns all observations that should currently exist in zms-ra.
         Past/expired observations should not be returned.
         """
         ...

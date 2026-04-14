@@ -1,4 +1,4 @@
-"""Entry point: poll loop that reconciles RA observations with ZMS claims."""
+"""Entry point: poll loop that reconciles RA observations into zms-ra."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import time
 
 from zmsclient.zmc.client import ZmsZmcClient
 
-from .bootstrap import SpectrumManager
 from .config import Settings
+from .ra_client import ZmsRaClient
 from .reconciler import reconcile
 from .report import generate_report, send_report
 from .sources.ods import OdsSource
@@ -73,13 +73,13 @@ def main():
 
     logging.basicConfig(format=LOG_FORMAT, level=settings.log_level, stream=sys.stderr)
 
-    client = ZmsZmcClient(
+    zmc_client = ZmsZmcClient(
         base_url=settings.zmc_url,
         token=settings.token,
     )
 
     if args.report:
-        body = generate_report(client, settings.element_id)
+        body = generate_report(zmc_client, settings.element_id)
         send_report(settings, body)
         return
 
@@ -94,7 +94,11 @@ def main():
         settings.poll_interval_seconds,
     )
 
-    spectrum_mgr = SpectrumManager(client, settings.element_id)
+    ra_client = ZmsRaClient(
+        base_url=settings.ra_url,
+        token=settings.token,
+        verify_ssl=settings.ra_verify_ssl,
+    )
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -108,16 +112,18 @@ def main():
             )
             try:
                 stats = reconcile(
-                    client=client,
+                    zmc_client=zmc_client,
+                    ra_client=ra_client,
                     source=source,
                     element_id=settings.element_id,
-                    spectrum_mgr=spectrum_mgr,
                 )
                 LOG.info(
-                    "Reconcile done: created=%d deleted=%d unchanged=%d errors=%d",
+                    "Reconcile done: created=%d deleted=%d unchanged=%d "
+                    "unmatched=%d errors=%d",
                     stats.created,
                     stats.deleted,
                     stats.unchanged,
+                    stats.unmatched,
                     stats.errors,
                 )
             except Exception:

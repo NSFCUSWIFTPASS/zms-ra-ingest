@@ -12,6 +12,10 @@ class Settings(BaseSettings):
 
     # ZMS connection
     zmc_url: str = Field(description="ZMC base URL, e.g. http://localhost:8010/v1")
+    ra_url: str = Field(description="zms-ra base URL, e.g. http://localhost:8050")
+    ra_verify_ssl: bool = Field(
+        default=True, description="Verify SSL on zms-ra connection"
+    )
     token: str = Field(description="ZMS API token")
 
     # Claim identity
