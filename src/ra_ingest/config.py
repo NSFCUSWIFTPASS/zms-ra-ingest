@@ -36,10 +36,6 @@ class Settings(BaseSettings):
     gcal_enabled: bool = Field(
         default=False, description="Enable Google Calendar grant/claim sync"
     )
-    gcal_cron: str = Field(
-        default="*/5 * * * *",
-        description="Cron schedule for calendar sync (default: every 5 min)",
-    )
     gcal_calendar_id: str = Field(default="", description="Google Calendar ID")
     gcal_calendar_token: str = Field(default="", description="Google Calendar API key")
     gcal_spectrum_id: str = Field(

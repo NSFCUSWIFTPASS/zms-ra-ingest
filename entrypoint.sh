@@ -6,15 +6,8 @@ CRON_JOBS=""
 # Export current env so cron jobs inherit it
 env | grep '^RA_INGEST_' > /tmp/ra_ingest.env
 
-# Google Calendar sync
-if [ "$RA_INGEST_GCAL_ENABLED" = "true" ] || [ "$RA_INGEST_GCAL_ENABLED" = "True" ] || [ "$RA_INGEST_GCAL_ENABLED" = "1" ]; then
-    GCAL_CRON="${RA_INGEST_GCAL_CRON:-*/5 * * * *}"
-    echo "Enabling gcal sync: ${GCAL_CRON}"
-
-    # Build gcal.py command from env vars
-    GCAL_CMD="/opt/venv/bin/python3 -m ra_ingest.gcal_sync"
-    CRON_JOBS="${CRON_JOBS}${GCAL_CRON} . /tmp/ra_ingest.env && ${GCAL_CMD} >> /proc/1/fd/1 2>> /proc/1/fd/2\n"
-fi
+# Note: gcal sync is now integrated into the main poll loop (no separate cron).
+# Set RA_INGEST_GCAL_ENABLED=true and the reconciler will pick it up.
 
 # Daily email report
 if [ "$RA_INGEST_REPORT_ENABLED" = "true" ] || [ "$RA_INGEST_REPORT_ENABLED" = "True" ] || [ "$RA_INGEST_REPORT_ENABLED" = "1" ]; then
