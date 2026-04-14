@@ -83,17 +83,6 @@ class TestOdsSource:
 
         assert source.source_type == "ra-ods"
         assert source.source_name == "hcro"
-        assert source.priority == 1023
-
-    def test_custom_priority(self):
-        source = OdsSource(
-            source_type="ra-ods",
-            source_name="hcro",
-            url="http://example.com",
-            priority=500,
-        )
-
-        assert source.priority == 500
 
     @patch("ra_ingest.sources.ods.httpx.Client")
     def test_fetch_parses_response(self, mock_client_cls):

@@ -1,15 +1,12 @@
 """Tests for the reconciler's diff and time-guard logic.
 
-We mock the ZMS client to avoid needing a running instance.
+We mock the ZMS clients to avoid needing running instances.
 """
 
 import datetime
 from unittest.mock import MagicMock
 
-from zmsclient.zmc.v1.models import ClaimList as RealClaimList
-
-from ra_ingest.bootstrap import SpectrumManager
-from ra_ingest.reconciler import _claim_matches, _started, reconcile
+from ra_ingest.reconciler import _record_matches, _record_started, reconcile
 from ra_ingest.sources.protocol import Observation
 
 # ---------------------------------------------------------------------------
@@ -31,166 +28,136 @@ def _make_obs(
         end=NOW + datetime.timedelta(hours=end_offset_hours),
         min_freq_hz=min_freq,
         max_freq_hz=max_freq,
+        site_id="ATA",
+        site_lat=40.8,
+        site_lon=-121.5,
+        site_elevation=1000.0,
+        source_id="ASP",
     )
 
 
-def _make_claim(ext_id, starts_at, expires_at, min_freq=1990, max_freq=1995):
-    """Create a mock Claim object with the fields the reconciler reads."""
-    constraint = MagicMock()
-    constraint.min_freq = min_freq
-    constraint.max_freq = max_freq
+def _make_record(ext_id, start, stop, min_freq=1990, max_freq=1995):
+    """Create a zms-ra record dict."""
+    return {
+        "TransactionId": ext_id,
+        "Id": f"id-{ext_id}",
+        "DateTimeStart": start.isoformat(),
+        "DateTimeStop": stop.isoformat(),
+        "FreqStart": float(min_freq),
+        "FreqStop": float(max_freq),
+    }
 
-    grant_constraint = MagicMock()
-    grant_constraint.constraint = constraint
 
-    grant = MagicMock()
-    grant.starts_at = starts_at
-    grant.expires_at = expires_at
-    grant.constraints = [grant_constraint]
-
-    claim = MagicMock()
-    claim.ext_id = ext_id
-    claim.id = f"claim-{ext_id}"
-    claim.grant = grant
-    return claim
+def _make_grant(grant_id, starts_at, expires_at):
+    """Create a mock Grant object."""
+    g = MagicMock()
+    g.id = grant_id
+    g.starts_at = starts_at
+    g.expires_at = expires_at
+    return g
 
 
 def _make_source(observations, source_type="ra-ods", source_name="hcro"):
     source = MagicMock()
     source.source_type = source_type
     source.source_name = source_name
-    source.priority = 1023
     source.fetch_observations.return_value = observations
     return source
 
 
-def _make_client(existing_claims=None):
-    """Create a mock ZMS client with list_claims and create/delete stubs."""
+def _make_zmc_client(grants=None):
+    """Mock ZmsZmcClient that returns the given grants from list_claims."""
+    from zmsclient.zmc.v1.models import ClaimList
+
     client = MagicMock()
+    grants = grants or []
+    claims = []
+    for g in grants:
+        c = MagicMock()
+        c.grant = g
+        claims.append(c)
 
-    claims = existing_claims or []
-    claim_list = MagicMock(spec=RealClaimList)
+    claim_list = MagicMock(spec=ClaimList)
     claim_list.claims = claims
-    claim_list.total = len(claims)
     claim_list.pages = 1
-
-    list_resp = MagicMock()
-    list_resp.is_success = True
-    list_resp.parsed = claim_list
-    list_resp.status_code = 200
-    client.list_claims.return_value = list_resp
-
-    created_claim = MagicMock()
-    created_claim.id = "new-claim-id"
-    create_resp = MagicMock()
-    create_resp.is_success = True
-    create_resp.parsed = created_claim
-    create_resp.status_code = 201
-    client.create_claim.return_value = create_resp
-
-    delete_resp = MagicMock()
-    delete_resp.is_success = True
-    delete_resp.status_code = 200
-    client.delete_claim.return_value = delete_resp
-
+    resp = MagicMock()
+    resp.is_success = True
+    resp.parsed = claim_list
+    client.list_claims.return_value = resp
     return client
 
 
-def _make_spectrum_mgr():
-    """Create a mock SpectrumManager that always returns a spectrum_id."""
-    mgr = MagicMock(spec=SpectrumManager)
-    mgr.get_spectrum_id.return_value = "test-spectrum-id"
-    return mgr
+def _make_ra_client(existing_records=None):
+    """Mock ZmsRaClient with create/delete/list stubs."""
+    client = MagicMock()
+    client.list_observations.return_value = existing_records or []
+    client.create_observation.return_value = {"id": "new-ra-id"}
+    client.delete_observation.return_value = True
+    return client
 
 
 # ---------------------------------------------------------------------------
-# _started tests
+# _record_started tests
 # ---------------------------------------------------------------------------
 
 
-class TestStarted:
-    def test_future_claim(self):
-        claim = _make_claim(
+class TestRecordStarted:
+    def test_future_record(self):
+        rec = _make_record(
             "x",
-            starts_at=NOW + datetime.timedelta(hours=1),
-            expires_at=NOW + datetime.timedelta(hours=2),
+            NOW + datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=2),
         )
-        assert _started(claim, NOW) is False
+        assert _record_started(rec, NOW) is False
 
-    def test_past_claim(self):
-        claim = _make_claim(
+    def test_past_record(self):
+        rec = _make_record(
             "x",
-            starts_at=NOW - datetime.timedelta(hours=2),
-            expires_at=NOW - datetime.timedelta(hours=1),
+            NOW - datetime.timedelta(hours=2),
+            NOW - datetime.timedelta(hours=1),
         )
-        assert _started(claim, NOW) is True
+        assert _record_started(rec, NOW) is True
 
-    def test_active_claim(self):
-        claim = _make_claim(
+    def test_active_record(self):
+        rec = _make_record(
             "x",
-            starts_at=NOW - datetime.timedelta(hours=1),
-            expires_at=NOW + datetime.timedelta(hours=1),
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
         )
-        assert _started(claim, NOW) is True
+        assert _record_started(rec, NOW) is True
 
-    def test_claim_starting_exactly_now(self):
-        claim = _make_claim(
-            "x", starts_at=NOW, expires_at=NOW + datetime.timedelta(hours=1)
-        )
-        assert _started(claim, NOW) is True
+    def test_record_starting_now(self):
+        rec = _make_record("x", NOW, NOW + datetime.timedelta(hours=1))
+        assert _record_started(rec, NOW) is True
 
-    def test_claim_with_no_grant(self):
-        claim = MagicMock()
-        claim.grant = None
-        claim.id = "bad-claim"
-        assert _started(claim, NOW) is True
-
-    def test_claim_with_no_starts_at(self):
-        claim = MagicMock()
-        claim.grant = MagicMock()
-        claim.grant.starts_at = None
-        claim.id = "bad-claim"
-        assert _started(claim, NOW) is True
+    def test_missing_start(self):
+        assert _record_started({}, NOW) is True
 
 
 # ---------------------------------------------------------------------------
-# _claim_matches tests
+# _record_matches tests
 # ---------------------------------------------------------------------------
 
 
-class TestClaimMatches:
+class TestRecordMatches:
     def test_identical(self):
-        obs = _make_obs("x", start_offset_hours=1, end_offset_hours=2)
-        claim = _make_claim("x", starts_at=obs.start, expires_at=obs.end)
-        assert _claim_matches(claim, obs) is True
+        obs = _make_obs("x")
+        rec = _make_record("x", obs.start, obs.end)
+        assert _record_matches(rec, obs) is True
 
     def test_time_changed(self):
-        obs = _make_obs("x", start_offset_hours=1, end_offset_hours=2)
-        claim = _make_claim(
-            "x",
-            starts_at=obs.start,
-            expires_at=obs.end + datetime.timedelta(minutes=30),
-        )
-        assert _claim_matches(claim, obs) is False
+        obs = _make_obs("x")
+        rec = _make_record("x", obs.start, obs.end + datetime.timedelta(minutes=30))
+        assert _record_matches(rec, obs) is False
 
     def test_freq_changed(self):
         obs = _make_obs("x", min_freq=1990, max_freq=1995)
-        claim = _make_claim(
-            "x", starts_at=obs.start, expires_at=obs.end, min_freq=1990, max_freq=2000
-        )
-        assert _claim_matches(claim, obs) is False
+        rec = _make_record("x", obs.start, obs.end, min_freq=1990, max_freq=2000)
+        assert _record_matches(rec, obs) is False
 
-    def test_no_grant(self):
+    def test_missing_fields(self):
         obs = _make_obs("x")
-        claim = MagicMock()
-        claim.grant = None
-        assert _claim_matches(claim, obs) is False
-
-    def test_no_constraints(self):
-        obs = _make_obs("x")
-        claim = _make_claim("x", starts_at=obs.start, expires_at=obs.end)
-        claim.grant.constraints = []
-        assert _claim_matches(claim, obs) is False
+        assert _record_matches({}, obs) is False
 
 
 # ---------------------------------------------------------------------------
@@ -198,149 +165,142 @@ class TestClaimMatches:
 # ---------------------------------------------------------------------------
 
 
+def _grant_covers_obs(obs):
+    """Grant covering the observation's time window."""
+    return _make_grant(
+        "test-grant-id",
+        obs.start - datetime.timedelta(hours=1),
+        obs.end + datetime.timedelta(hours=1),
+    )
+
+
 class TestReconcile:
     def test_create_new_observation(self):
-        """Source has an observation, ZMS has no claims -> create."""
+        """Source has an observation, zms-ra has nothing -> create."""
         obs = _make_obs("obs-1")
         source = _make_source([obs])
-        client = _make_client(existing_claims=[])
+        zmc_client = _make_zmc_client(grants=[_grant_covers_obs(obs)])
+        ra_client = _make_ra_client(existing_records=[])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.created == 1
         assert stats.deleted == 0
-        client.create_claim.assert_called_once()
+        ra_client.create_observation.assert_called_once()
 
     def test_no_changes(self):
-        """Source and ZMS match -> no creates or deletes."""
-        obs = _make_obs("obs-1", start_offset_hours=1, end_offset_hours=2)
-        claim = _make_claim("obs-1", starts_at=obs.start, expires_at=obs.end)
+        """Source and zms-ra match -> no creates or deletes."""
+        obs = _make_obs("obs-1")
+        rec = _make_record("obs-1", obs.start, obs.end)
         source = _make_source([obs])
-        client = _make_client(existing_claims=[claim])
+        zmc_client = _make_zmc_client(grants=[_grant_covers_obs(obs)])
+        ra_client = _make_ra_client(existing_records=[rec])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.created == 0
         assert stats.deleted == 0
         assert stats.unchanged == 1
-        client.create_claim.assert_not_called()
-        client.delete_claim.assert_not_called()
+        ra_client.create_observation.assert_not_called()
+        ra_client.delete_observation.assert_not_called()
+
+    def test_unmatched_observation_skipped(self):
+        """Source has an observation but no gcal grant covers it -> skip."""
+        obs = _make_obs("obs-1")
+        source = _make_source([obs])
+        zmc_client = _make_zmc_client(grants=[])  # no grants
+        ra_client = _make_ra_client(existing_records=[])
+
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
+
+        assert stats.created == 0
+        assert stats.unmatched == 1
+        ra_client.create_observation.assert_not_called()
 
     def test_delete_cancelled_future_observation(self):
-        """ZMS has a future claim that source no longer lists -> delete."""
+        """zms-ra has a future record that source no longer lists -> delete."""
         future_start = NOW + datetime.timedelta(hours=3)
         future_end = NOW + datetime.timedelta(hours=4)
-        claim = _make_claim(
-            "obs-cancelled", starts_at=future_start, expires_at=future_end
-        )
+        rec = _make_record("obs-cancelled", future_start, future_end)
         source = _make_source([])
-        client = _make_client(existing_claims=[claim])
+        zmc_client = _make_zmc_client(grants=[])
+        ra_client = _make_ra_client(existing_records=[rec])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.deleted == 1
-        client.delete_claim.assert_called_once_with(claim_id="claim-obs-cancelled")
+        ra_client.delete_observation.assert_called_once_with("obs-cancelled")
 
-    def test_keep_past_claim_not_in_source(self):
-        """ZMS has a past claim that source no longer lists -> keep it."""
+    def test_keep_past_record_not_in_source(self):
+        """zms-ra has a past record that source no longer lists -> keep it."""
         past_start = NOW - datetime.timedelta(hours=4)
         past_end = NOW - datetime.timedelta(hours=3)
-        claim = _make_claim("obs-done", starts_at=past_start, expires_at=past_end)
+        rec = _make_record("obs-done", past_start, past_end)
         source = _make_source([])
-        client = _make_client(existing_claims=[claim])
+        zmc_client = _make_zmc_client(grants=[])
+        ra_client = _make_ra_client(existing_records=[rec])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.deleted == 0
         assert stats.unchanged == 1
-        client.delete_claim.assert_not_called()
+        ra_client.delete_observation.assert_not_called()
 
-    def test_keep_active_claim_not_in_source(self):
-        """ZMS has an active (started) claim that source no longer lists -> keep it."""
+    def test_keep_active_record_not_in_source(self):
+        """Active record that source no longer lists -> keep it."""
         active_start = NOW - datetime.timedelta(hours=1)
         active_end = NOW + datetime.timedelta(hours=1)
-        claim = _make_claim("obs-active", starts_at=active_start, expires_at=active_end)
+        rec = _make_record("obs-active", active_start, active_end)
         source = _make_source([])
-        client = _make_client(existing_claims=[claim])
+        zmc_client = _make_zmc_client(grants=[])
+        ra_client = _make_ra_client(existing_records=[rec])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.deleted == 0
         assert stats.unchanged == 1
-        client.delete_claim.assert_not_called()
+        ra_client.delete_observation.assert_not_called()
 
-    def test_recreate_changed_future_claim(self):
+    def test_recreate_changed_future_record(self):
         """Source has updated time for a future observation -> delete + recreate."""
         old_start = NOW + datetime.timedelta(hours=2)
         old_end = NOW + datetime.timedelta(hours=3)
         new_obs = _make_obs("obs-moved", start_offset_hours=4, end_offset_hours=5)
-        claim = _make_claim("obs-moved", starts_at=old_start, expires_at=old_end)
+        rec = _make_record("obs-moved", old_start, old_end)
         source = _make_source([new_obs])
-        client = _make_client(existing_claims=[claim])
+        zmc_client = _make_zmc_client(grants=[_grant_covers_obs(new_obs)])
+        ra_client = _make_ra_client(existing_records=[rec])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.deleted == 1
         assert stats.created == 1
 
-    def test_no_recreate_changed_active_claim(self):
-        """Source shows different time for an already-started claim -> leave it."""
+    def test_no_recreate_changed_active_record(self):
+        """Source shows different time for an already-started record -> leave it."""
         active_start = NOW - datetime.timedelta(hours=1)
         active_end = NOW + datetime.timedelta(hours=1)
         new_obs = _make_obs("obs-active", start_offset_hours=-1, end_offset_hours=2)
-        claim = _make_claim("obs-active", starts_at=active_start, expires_at=active_end)
+        rec = _make_record("obs-active", active_start, active_end)
         source = _make_source([new_obs])
-        client = _make_client(existing_claims=[claim])
+        zmc_client = _make_zmc_client(grants=[_grant_covers_obs(new_obs)])
+        ra_client = _make_ra_client(existing_records=[rec])
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.deleted == 0
         assert stats.created == 0
         assert stats.unchanged == 1
-
-    def test_mixed_scenario(self):
-        """Multiple observations: one new, one unchanged, one cancelled future, one past."""
-        existing_obs = _make_obs(
-            "obs-existing", start_offset_hours=1, end_offset_hours=2
-        )
-        new_obs = _make_obs("obs-new", start_offset_hours=5, end_offset_hours=6)
-
-        claim_existing = _make_claim(
-            "obs-existing", starts_at=existing_obs.start, expires_at=existing_obs.end
-        )
-        claim_cancelled = _make_claim(
-            "obs-cancelled",
-            starts_at=NOW + datetime.timedelta(hours=8),
-            expires_at=NOW + datetime.timedelta(hours=9),
-        )
-        claim_past = _make_claim(
-            "obs-past",
-            starts_at=NOW - datetime.timedelta(hours=5),
-            expires_at=NOW - datetime.timedelta(hours=4),
-        )
-
-        source = _make_source([existing_obs, new_obs])
-        client = _make_client(
-            existing_claims=[claim_existing, claim_cancelled, claim_past]
-        )
-
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
-
-        assert stats.created == 1  # obs-new
-        assert stats.deleted == 1  # obs-cancelled (future, not in source)
-        assert stats.unchanged == 2  # obs-existing (matched) + obs-past (kept)
 
     def test_create_error_doesnt_crash(self):
         """API error on create -> stats.errors incremented, loop continues."""
         obs = _make_obs("obs-1")
         source = _make_source([obs])
-        client = _make_client(existing_claims=[])
-        fail_resp = MagicMock()
-        fail_resp.is_success = False
-        fail_resp.status_code = 500
-        client.create_claim.return_value = fail_resp
+        zmc_client = _make_zmc_client(grants=[_grant_covers_obs(obs)])
+        ra_client = _make_ra_client(existing_records=[])
+        ra_client.create_observation.return_value = None
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.errors == 1
         assert stats.created == 0
@@ -349,27 +309,13 @@ class TestReconcile:
         """API error on delete -> stats.errors incremented, loop continues."""
         future_start = NOW + datetime.timedelta(hours=3)
         future_end = NOW + datetime.timedelta(hours=4)
-        claim = _make_claim("obs-1", starts_at=future_start, expires_at=future_end)
+        rec = _make_record("obs-1", future_start, future_end)
         source = _make_source([])
-        client = _make_client(existing_claims=[claim])
-        fail_resp = MagicMock()
-        fail_resp.is_success = False
-        fail_resp.status_code = 500
-        client.delete_claim.return_value = fail_resp
+        zmc_client = _make_zmc_client(grants=[])
+        ra_client = _make_ra_client(existing_records=[rec])
+        ra_client.delete_observation.return_value = False
 
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
 
         assert stats.errors == 1
         assert stats.deleted == 0
-
-    def test_create_exception_doesnt_crash(self):
-        """Exception during create -> stats.errors incremented, loop continues."""
-        obs = _make_obs("obs-1")
-        source = _make_source([obs])
-        client = _make_client(existing_claims=[])
-        client.create_claim.side_effect = RuntimeError("boom")
-
-        stats = reconcile(client, source, "elem-1", _make_spectrum_mgr(), now=NOW)
-
-        assert stats.errors == 1
-        assert stats.created == 0
