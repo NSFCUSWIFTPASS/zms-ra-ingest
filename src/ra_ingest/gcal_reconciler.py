@@ -152,7 +152,8 @@ def _try_create(
         if resp.is_success:
             LOG.info(
                 "Created gcal claim for %s on spectrum %s",
-                obs.ext_id, spectrum.name,
+                obs.ext_id,
+                spectrum.name,
             )
             stats.created += 1
         else:

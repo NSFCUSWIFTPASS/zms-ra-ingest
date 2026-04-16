@@ -3,7 +3,12 @@
 import datetime
 from unittest.mock import MagicMock
 
-from zmsclient.zmc.v1.models import Constraint, Spectrum, SpectrumConstraint, SpectrumList
+from zmsclient.zmc.v1.models import (
+    Constraint,
+    Spectrum,
+    SpectrumConstraint,
+    SpectrumList,
+)
 
 from ra_ingest.spectrum_picker import SpectrumPicker, _spectrum_bounds
 
@@ -59,7 +64,9 @@ class TestSpectrumBounds:
         assert _spectrum_bounds(s) == (1_000_000_000, 2_000_000_000)
 
     def test_no_constraints_returns_none(self):
-        s = Spectrum(element_id="e", name="n", url="http://x", enabled=True, starts_at=STARTS_AT)
+        s = Spectrum(
+            element_id="e", name="n", url="http://x", enabled=True, starts_at=STARTS_AT
+        )
         s.constraints = []
         assert _spectrum_bounds(s) is None
 
