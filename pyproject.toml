@@ -5,7 +5,7 @@ description = "Ingests RA facility observation schedules into OpenZMS as claims"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "zms-client @ git+https://gitlab.flux.utah.edu/openzms/zms-client-py.git@d3dae358b605c45cb6818197fcc97f367e5d2dc9",
+    "zms-client @ git+https://gitlab.flux.utah.edu/openzms/zms-client-py.git@d1f929392298e22311d993f468136cd362c29003",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "httpx>=0.20.0,<0.28.0",
