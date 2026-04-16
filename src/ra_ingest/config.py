@@ -38,9 +38,6 @@ class Settings(BaseSettings):
     )
     gcal_calendar_id: str = Field(default="", description="Google Calendar ID")
     gcal_calendar_token: str = Field(default="", description="Google Calendar API key")
-    gcal_spectrum_id: str = Field(
-        default="", description="Spectrum ID for calendar claims"
-    )
     gcal_min_freq: float = Field(
         default=1000, description="Min frequency (MHz) for calendar claims"
     )

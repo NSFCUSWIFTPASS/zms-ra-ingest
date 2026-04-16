@@ -19,6 +19,7 @@ from .reconciler import reconcile
 from .report import generate_report, send_report
 from .sources.gcal import GcalSource
 from .sources.ods import OdsSource
+from .spectrum_picker import SpectrumPicker
 
 SOURCE_REGISTRY: dict[str, type] = {
     "ods": OdsSource,
@@ -46,7 +47,6 @@ def _build_gcal_source(settings: Settings) -> GcalSource | None:
         for name, val in (
             ("gcal_calendar_id", settings.gcal_calendar_id),
             ("gcal_calendar_token", settings.gcal_calendar_token),
-            ("gcal_spectrum_id", settings.gcal_spectrum_id),
         )
         if not val
     ]
@@ -147,6 +147,8 @@ def main():
         verify_ssl=settings.ra_verify_ssl,
     )
 
+    spectrum_picker = SpectrumPicker(zmc_client, settings.element_id)
+
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
@@ -160,7 +162,7 @@ def main():
                     client=zmc_client,
                     source=gcal_source,
                     element_id=settings.element_id,
-                    spectrum_id=settings.gcal_spectrum_id,
+                    picker=spectrum_picker,
                 )
                 LOG.info(
                     "Gcal reconcile done: created=%d deleted=%d unchanged=%d errors=%d",

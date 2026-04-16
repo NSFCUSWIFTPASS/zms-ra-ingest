@@ -3,7 +3,14 @@
 import datetime
 from unittest.mock import MagicMock
 
-from zmsclient.zmc.v1.models import Claim, ClaimList, Constraint, Grant, GrantConstraint
+from zmsclient.zmc.v1.models import (
+    Claim,
+    ClaimList,
+    Constraint,
+    Grant,
+    GrantConstraint,
+    Spectrum,
+)
 
 from ra_ingest.gcal_reconciler import (
     _claim_matches,
@@ -70,6 +77,17 @@ def _make_source(observations, ext_id_prefix="gcal-"):
     source.ext_id_prefix = ext_id_prefix
     source.fetch_observations.return_value = observations
     return source
+
+
+def _make_picker(spectrum_id=SPECTRUM_ID):
+    """Build a mock SpectrumPicker that always returns the same spectrum."""
+    spec = MagicMock(spec=Spectrum)
+    spec.id = spectrum_id
+    spec.name = "test-spec"
+    picker = MagicMock()
+    picker.pick.return_value = spec
+    picker.refresh.return_value = 1
+    return picker
 
 
 def _make_client(existing_claims=None):
@@ -163,7 +181,7 @@ class TestReconcileGcal:
         source = _make_source([obs])
         client = _make_client(existing_claims=[])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.created == 1
         assert stats.deleted == 0
@@ -175,7 +193,7 @@ class TestReconcileGcal:
         source = _make_source([obs])
         client = _make_client(existing_claims=[c])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.created == 0
         assert stats.deleted == 0
@@ -192,7 +210,7 @@ class TestReconcileGcal:
         source = _make_source([])
         client = _make_client(existing_claims=[c])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.deleted == 1
         client.delete_claim.assert_called_once_with(claim_id="claim-id-gcal-cancelled")
@@ -206,7 +224,7 @@ class TestReconcileGcal:
         source = _make_source([])
         client = _make_client(existing_claims=[c])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.unchanged == 1
@@ -221,7 +239,7 @@ class TestReconcileGcal:
         source = _make_source([])
         client = _make_client(existing_claims=[c])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.unchanged == 1
@@ -235,7 +253,7 @@ class TestReconcileGcal:
         source = _make_source([new_obs])
         client = _make_client(existing_claims=[c])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.deleted == 1
         assert stats.created == 1
@@ -248,7 +266,7 @@ class TestReconcileGcal:
         source = _make_source([new_obs])
         client = _make_client(existing_claims=[c])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.created == 0
@@ -269,7 +287,7 @@ class TestReconcileGcal:
         source = _make_source([])  # nothing desired
         client = _make_client(existing_claims=[ours, theirs])
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         # Should only try to delete the "gcal-" prefixed claim, not the ra-ods one
         assert stats.deleted == 1
@@ -281,7 +299,7 @@ class TestReconcileGcal:
         client = _make_client(existing_claims=[])
         client.create_claim.return_value = MagicMock(is_success=False, status_code=500)
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.created == 0
         assert stats.errors == 1
@@ -296,7 +314,7 @@ class TestReconcileGcal:
         client = _make_client(existing_claims=[c])
         client.delete_claim.return_value = MagicMock(is_success=False, status_code=500)
 
-        stats = reconcile_gcal(client, source, ELEMENT_ID, SPECTRUM_ID, now=NOW)
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
         assert stats.deleted == 0
         assert stats.errors == 1

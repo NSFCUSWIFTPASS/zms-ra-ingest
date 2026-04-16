@@ -30,6 +30,7 @@ from zmsclient.zmc.v1.models import (
 
 from .sources.gcal import GcalSource
 from .sources.protocol import Observation
+from .spectrum_picker import SpectrumPicker
 
 LOG = logging.getLogger(__name__)
 
@@ -46,12 +47,18 @@ def reconcile_gcal(
     client: ZmsZmcClient,
     source: GcalSource,
     element_id: str,
-    spectrum_id: str,
+    picker: SpectrumPicker,
     now: datetime.datetime | None = None,
 ) -> ReconcileStats:
-    """Run one reconciliation cycle for a gcal source against ZMC."""
+    """Run one reconciliation cycle for a gcal source against ZMC.
+
+    Each observation gets routed to the narrowest spectrum whose freq range
+    covers it. Observations with no matching spectrum are skipped.
+    """
     stats = ReconcileStats()
     now = now or datetime.datetime.now(datetime.UTC)
+
+    picker.refresh()
 
     desired = {obs.ext_id: obs for obs in source.fetch_observations()}
     current = {
@@ -62,7 +69,7 @@ def reconcile_gcal(
 
     # New observations -> create
     for ext_id in desired.keys() - current.keys():
-        _try_create(client, desired[ext_id], element_id, spectrum_id, source, stats)
+        _try_create(client, desired[ext_id], element_id, picker, source, stats)
 
     # Vanished observations -> delete if not yet started
     for ext_id in current.keys() - desired.keys():
@@ -87,7 +94,7 @@ def reconcile_gcal(
             stats.unchanged += 1
         else:
             _try_delete(client, claim, stats)
-            _try_create(client, obs, element_id, spectrum_id, source, stats)
+            _try_create(client, obs, element_id, picker, source, stats)
 
     return stats
 
@@ -126,15 +133,27 @@ def _try_create(
     client: ZmsZmcClient,
     obs: Observation,
     element_id: str,
-    spectrum_id: str,
+    picker: SpectrumPicker,
     source: GcalSource,
     stats: ReconcileStats,
 ) -> None:
+    spectrum = picker.pick(obs.min_freq_hz, obs.max_freq_hz)
+    if spectrum is None:
+        LOG.warning(
+            "No spectrum covers %s (%d-%d Hz); skipping",
+            obs.ext_id,
+            obs.min_freq_hz,
+            obs.max_freq_hz,
+        )
+        return
     try:
-        body = _build_claim(obs, element_id, spectrum_id, source)
+        body = _build_claim(obs, element_id, str(spectrum.id), source)
         resp = client.create_claim(body=body, x_api_elaborate="true")
         if resp.is_success:
-            LOG.info("Created gcal claim for %s", obs.ext_id)
+            LOG.info(
+                "Created gcal claim for %s on spectrum %s",
+                obs.ext_id, spectrum.name,
+            )
             stats.created += 1
         else:
             LOG.error(
