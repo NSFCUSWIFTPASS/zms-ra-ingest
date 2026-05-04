@@ -24,7 +24,7 @@ def fetch_gcal_grants(
     while True:
         resp = client.list_claims(
             element_id=element_id,
-            ext=GCAL_EXT_ID_PREFIX,
+            ext_id=GCAL_EXT_ID_PREFIX,
             page=page,
             items_per_page=100,
             x_api_elaborate="True",
