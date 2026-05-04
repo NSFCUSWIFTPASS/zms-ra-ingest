@@ -49,7 +49,7 @@ class ZmsRaClient:
                 )
                 break
             body = resp.json()
-            observations.extend(body.get("ra_observations", []))
+            observations.extend(body.get("ra_observations") or [])
             if page >= body.get("pages", 1):
                 break
             page += 1
