@@ -114,4 +114,7 @@ def observation_to_ra_body(
         body["TrkRateRaDegPerSec"] = obs.trk_rate_ra
     if obs.trk_rate_dec is not None:
         body["TrkRateDecDegPerSec"] = obs.trk_rate_dec
+    if obs.dish_diameter_m is not None:
+        body["DishDiameterM"] = obs.dish_diameter_m
+    body["Subarray"] = obs.subarray
     return body

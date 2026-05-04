@@ -113,4 +113,9 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
         trk_rate_ra=item.get("trk_rate_ra_deg_per_sec"),
         trk_rate_dec=item.get("trk_rate_dec_deg_per_sec"),
         subarray=subarray,
+        dish_diameter_m=(
+            float(item["dish_diameter_m"])
+            if item.get("dish_diameter_m") is not None
+            else None
+        ),
     )

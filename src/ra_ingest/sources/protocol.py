@@ -36,6 +36,7 @@ class Observation:
     trk_rate_ra: float | None = None
     trk_rate_dec: float | None = None
     subarray: int = 0
+    dish_diameter_m: float | None = None
 
 
 class RASource(Protocol):
