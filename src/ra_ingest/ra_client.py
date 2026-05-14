@@ -2,11 +2,13 @@
 
 zms-ra has its own REST API for storing/retrieving RAObservation records.
 We use httpx directly since there's no Python client for it yet.
+
+ra-ingest posts ODS-shaped JSON to /v1/ods/observations; zms-ra translates
+that into a canonical RAObservation row internally.
 """
 
 from __future__ import annotations
 
-import datetime
 import logging
 from typing import Any
 
@@ -56,11 +58,11 @@ class ZmsRaClient:
         return observations
 
     def create_observation(self, body: dict[str, Any]) -> dict[str, Any] | None:
-        resp = self._client.post(f"{self._base}/v1/raobservations", json=body)
+        resp = self._client.post(f"{self._base}/v1/ods/observations", json=body)
         if resp.status_code in (200, 201):
             return resp.json()
         LOG.error(
-            "Failed to create raobservation: %s %s", resp.status_code, resp.text[:300]
+            "Failed to create observation: %s %s", resp.status_code, resp.text[:300]
         )
         return None
 
@@ -81,40 +83,35 @@ def observation_to_ra_body(
     obs: Observation,
     grant_id: str,
 ) -> dict[str, Any]:
-    """Convert an internal Observation into a zms-ra POST body."""
+    """Convert an internal Observation into an ODS-shaped POST body for zms-ra.
+
+    Field names match the ODS schema; degrees throughout, no fabricated
+    TardyS4 fields.
+    """
     body: dict[str, Any] = {
         "GrantId": grant_id,
         "TransactionId": obs.ext_id,
-        "DateTimeStart": obs.start.isoformat(),
-        "DateTimeStop": obs.end.isoformat(),
-        "DpaName": obs.site_id or "unknown",
-        "DpaId": obs.site_id or "unknown",
-        "LocLat": obs.site_lat,
-        "LocLong": obs.site_lon,
-        "LocElevation": obs.site_elevation,
-        "LocRadius": 0.0,
-        "CoordType": "radec",
-        "RegionX": obs.ra_j2000_deg / 15.0,  # degrees -> hours for RA
-        "RegionY": obs.dec_j2000_deg,
-        "RegionSize": 0.5,
-        "FreqStart": float(obs.min_freq_hz),
-        "FreqStop": float(obs.max_freq_hz),
-        "SourceId": obs.source_id,
-        "ObsType": "spectral",
-        "EventId": 1,
-        "NumberEvents": 1,
-        "EventStatus": "projected",
-        "Acquisition": obs.slew_sec,
-        "CorrInt": obs.corr_int_sec,
-        "Checksum": f"ra-ingest:{obs.ext_id}",
-        "DateTimePublished": datetime.datetime.now(datetime.UTC).isoformat(),
-        "DateTimeCreated": datetime.datetime.now(datetime.UTC).isoformat(),
+        "site_id": obs.site_id,
+        "site_lat_deg": obs.site_lat,
+        "site_lon_deg": obs.site_lon,
+        "site_el_m": obs.site_elevation,
+        "src_id": obs.source_id,
+        "src_start_utc": obs.start.isoformat(),
+        "src_end_utc": obs.end.isoformat(),
+        "src_ra_j2000_deg": obs.ra_j2000_deg,
+        "src_dec_j2000_deg": obs.dec_j2000_deg,
+        "src_radius": 0.5,
+        "freq_lower_hz": float(obs.min_freq_hz),
+        "freq_upper_hz": float(obs.max_freq_hz),
+        "slew_sec": obs.slew_sec,
+        "corr_integ_time_sec": obs.corr_int_sec,
+        "obs_type": "spectral",
+        "subarray": obs.subarray,
     }
     if obs.trk_rate_ra is not None:
-        body["TrkRateRaDegPerSec"] = obs.trk_rate_ra
+        body["trk_rate_ra_deg_per_sec"] = obs.trk_rate_ra
     if obs.trk_rate_dec is not None:
-        body["TrkRateDecDegPerSec"] = obs.trk_rate_dec
+        body["trk_rate_dec_deg_per_sec"] = obs.trk_rate_dec
     if obs.dish_diameter_m is not None:
-        body["DishDiameterM"] = obs.dish_diameter_m
-    body["Subarray"] = obs.subarray
+        body["dish_diameter_m"] = obs.dish_diameter_m
     return body
