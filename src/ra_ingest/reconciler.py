@@ -58,17 +58,20 @@ def reconcile(
     gcal_grants = fetch_gcal_grants(zmc_client, element_id)
     LOG.info("Loaded %d gcal grants for matching", len(gcal_grants))
 
-    # New observations: create
-    for ext_id in desired.keys() - current.keys():
-        _try_create(ra_client, desired[ext_id], gcal_grants, stats)
-
-    # Vanished observations: delete (only if not yet started)
+    # Vanished observations: delete first (only if not yet started). Doing
+    # deletes before creates avoids 409 conflicts when a stale row's
+    # source_id + time window overlaps an incoming new row -- common when the
+    # source generates fresh TransactionIds on each poll.
     for ext_id in current.keys() - desired.keys():
         rec = current[ext_id]
         if _record_started(rec, now):
             stats.unchanged += 1
         else:
             _try_delete(ra_client, rec, stats)
+
+    # New observations: create
+    for ext_id in desired.keys() - current.keys():
+        _try_create(ra_client, desired[ext_id], gcal_grants, stats)
 
     # Existing observations: check for drift
     for ext_id in desired.keys() & current.keys():
