@@ -37,23 +37,8 @@ def _handle_signal(signum, frame):
     _shutdown = True
 
 
-def _build_gcal_source(settings: Settings) -> GcalSource | None:
-    """Build a GcalSource from settings, or None if gcal sync is disabled."""
-    if not settings.gcal_enabled:
-        return None
-
-    missing = [
-        name
-        for name, val in (
-            ("gcal_calendar_id", settings.gcal_calendar_id),
-            ("gcal_calendar_token", settings.gcal_calendar_token),
-        )
-        if not val
-    ]
-    if missing:
-        LOG.error("gcal enabled but missing required settings: %s", ", ".join(missing))
-        return None
-
+def _build_gcal_source(settings: Settings) -> GcalSource:
+    """Build a GcalSource from settings. Required; Pydantic enforces config presence."""
     filter_exc: list[re.Pattern] = []
     filter_inc: list[re.Pattern] = []
     if settings.gcal_filter_exc:
@@ -130,14 +115,9 @@ def main():
     ods_sources = _load_sources(settings)
     gcal_source = _build_gcal_source(settings)
 
-    if not ods_sources and gcal_source is None:
-        LOG.error("No sources configured (neither ODS nor gcal), exiting")
-        sys.exit(1)
-
     LOG.info(
-        "Starting zms-ra-ingest: %d ODS source(s), gcal=%s, polling every %ds",
+        "Starting zms-ra-ingest: %d ODS source(s), gcal enabled, polling every %ds",
         len(ods_sources),
-        "enabled" if gcal_source else "disabled",
         settings.poll_interval_seconds,
     )
 
@@ -155,24 +135,23 @@ def main():
     while not _shutdown:
         # gcal first: ODS observations reference gcal grants, so gcal
         # should be in sync before ODS runs.
-        if gcal_source is not None:
-            LOG.info("Reconciling gcal source")
-            try:
-                gstats = reconcile_gcal(
-                    client=zmc_client,
-                    source=gcal_source,
-                    element_id=settings.element_id,
-                    picker=spectrum_picker,
-                )
-                LOG.info(
-                    "Gcal reconcile done: created=%d deleted=%d unchanged=%d errors=%d",
-                    gstats.created,
-                    gstats.deleted,
-                    gstats.unchanged,
-                    gstats.errors,
-                )
-            except Exception:
-                LOG.exception("Error reconciling gcal source")
+        LOG.info("Reconciling gcal source")
+        try:
+            gstats = reconcile_gcal(
+                client=zmc_client,
+                source=gcal_source,
+                element_id=settings.element_id,
+                picker=spectrum_picker,
+            )
+            LOG.info(
+                "Gcal reconcile done: created=%d deleted=%d unchanged=%d errors=%d",
+                gstats.created,
+                gstats.deleted,
+                gstats.unchanged,
+                gstats.errors,
+            )
+        except Exception:
+            LOG.exception("Error reconciling gcal source")
 
         for source in ods_sources:
             LOG.info(

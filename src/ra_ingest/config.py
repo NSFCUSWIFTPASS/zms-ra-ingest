@@ -32,12 +32,9 @@ class Settings(BaseSettings):
         description="Path to JSON file defining the RA data sources",
     )
 
-    # Google Calendar sync (optional)
-    gcal_enabled: bool = Field(
-        default=False, description="Enable Google Calendar grant/claim sync"
-    )
-    gcal_calendar_id: str = Field(default="", description="Google Calendar ID")
-    gcal_calendar_token: str = Field(default="", description="Google Calendar API key")
+    # Google Calendar sync (required)
+    gcal_calendar_id: str = Field(description="Google Calendar ID")
+    gcal_calendar_token: str = Field(description="Google Calendar API key")
     gcal_min_freq: float = Field(
         default=1000, description="Min frequency (MHz) for calendar claims"
     )
