@@ -49,6 +49,7 @@ class GcalSource:
         calendar_token: str,
         default_min_freq_hz: int,
         default_max_freq_hz: int,
+        lookahead_days: int = 28,
         ext_id_prefix: str = "gcal-",
         filter_exc: list[Pattern] | None = None,
         filter_inc: list[Pattern] | None = None,
@@ -59,6 +60,7 @@ class GcalSource:
         self._calendar_token = calendar_token
         self._default_min_freq_hz = default_min_freq_hz
         self._default_max_freq_hz = default_max_freq_hz
+        self._lookahead_days = lookahead_days
         self._ext_id_prefix = ext_id_prefix
         self._filter_exc = filter_exc or []
         self._filter_inc = filter_inc or []
@@ -78,12 +80,13 @@ class GcalSource:
     def fetch_observations(self) -> list[Observation]:
         """Fetch future events from gcal and return them as Observations."""
         now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
+        end = now + datetime.timedelta(days=self._lookahead_days)
         try:
             events = get_events(
                 self._calendar_id,
                 self._calendar_token,
                 now,
-                None,
+                end,
                 self._filter_exc,
                 self._filter_inc,
             )

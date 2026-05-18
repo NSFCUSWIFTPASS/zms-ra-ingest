@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Google Calendar sync (required)
     gcal_calendar_id: str = Field(description="Google Calendar ID")
     gcal_calendar_token: str = Field(description="Google Calendar API key")
+    gcal_lookahead_days: int = Field(
+        default=28,
+        description="How far ahead of now to pull calendar events (days)",
+    )
     gcal_min_freq: float = Field(
         default=1000, description="Min frequency (MHz) for calendar claims"
     )

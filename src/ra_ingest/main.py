@@ -57,6 +57,7 @@ def _build_gcal_source(settings: Settings) -> GcalSource:
         calendar_token=settings.gcal_calendar_token,
         default_min_freq_hz=int(settings.gcal_min_freq * 1_000_000),
         default_max_freq_hz=int(settings.gcal_max_freq * 1_000_000),
+        lookahead_days=settings.gcal_lookahead_days,
         filter_exc=filter_exc,
         filter_inc=filter_inc,
     )
@@ -116,8 +117,9 @@ def main():
     gcal_source = _build_gcal_source(settings)
 
     LOG.info(
-        "Starting zms-ra-ingest: %d ODS source(s), gcal enabled, polling every %ds",
+        "Starting zms-ra-ingest: %d ODS source(s), gcal lookahead %dd, polling every %ds",
         len(ods_sources),
+        settings.gcal_lookahead_days,
         settings.poll_interval_seconds,
     )
 
