@@ -85,33 +85,38 @@ def observation_to_ra_body(
 ) -> dict[str, Any]:
     """Convert an internal Observation into an ODS-shaped POST body for zms-ra.
 
-    Field names match the ODS schema; degrees throughout, no fabricated
-    TardyS4 fields.
+    Requires obs.target to be set (callers should only invoke for ODS-sourced
+    observations). Field names match the ODS schema; degrees throughout.
     """
+    if obs.target is None:
+        raise ValueError(
+            f"observation_to_ra_body called on obs with no target (ext_id={obs.ext_id})"
+        )
+    t = obs.target
     body: dict[str, Any] = {
         "GrantId": grant_id,
         "TransactionId": obs.ext_id,
-        "site_id": obs.site_id,
-        "site_lat_deg": obs.site_lat,
-        "site_lon_deg": obs.site_lon,
-        "site_el_m": obs.site_elevation,
-        "src_id": obs.source_id,
+        "site_id": t.site_id,
+        "site_lat_deg": t.site_lat,
+        "site_lon_deg": t.site_lon,
+        "site_el_m": t.site_elevation,
+        "src_id": t.source_id,
         "src_start_utc": obs.start.isoformat(),
         "src_end_utc": obs.end.isoformat(),
-        "src_ra_j2000_deg": obs.ra_j2000_deg,
-        "src_dec_j2000_deg": obs.dec_j2000_deg,
+        "src_ra_j2000_deg": t.ra_j2000_deg,
+        "src_dec_j2000_deg": t.dec_j2000_deg,
         "src_radius": 0.5,
         "freq_lower_hz": float(obs.min_freq_hz),
         "freq_upper_hz": float(obs.max_freq_hz),
-        "slew_sec": obs.slew_sec,
-        "corr_integ_time_sec": obs.corr_int_sec,
+        "slew_sec": t.slew_sec,
+        "corr_integ_time_sec": t.corr_int_sec,
         "obs_type": "spectral",
-        "subarray": obs.subarray,
+        "subarray": t.subarray,
     }
-    if obs.trk_rate_ra is not None:
-        body["trk_rate_ra_deg_per_sec"] = obs.trk_rate_ra
-    if obs.trk_rate_dec is not None:
-        body["trk_rate_dec_deg_per_sec"] = obs.trk_rate_dec
-    if obs.dish_diameter_m is not None:
-        body["dish_diameter_m"] = obs.dish_diameter_m
+    if t.trk_rate_ra is not None:
+        body["trk_rate_ra_deg_per_sec"] = t.trk_rate_ra
+    if t.trk_rate_dec is not None:
+        body["trk_rate_dec_deg_per_sec"] = t.trk_rate_dec
+    if t.dish_diameter_m is not None:
+        body["dish_diameter_m"] = t.dish_diameter_m
     return body

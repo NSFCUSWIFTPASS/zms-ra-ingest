@@ -6,24 +6,14 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
-class Observation:
-    """A scheduled RA observation from an external source.
+class ObsTarget:
+    """Sky-pointing + site metadata for a single observation.
 
-    This is the common representation that all sources produce. The
-    reconciler POSTs these into zms-ra as RAObservation records, attached
-    to the matching gcal grant.
+    Only sources that produce per-pointing RA observations (ODS, future
+    TardyS4-shaped inputs) populate this. Calendar-source observations
+    leave it unset.
     """
 
-    ext_id: str
-    name: str
-    start: datetime.datetime
-    end: datetime.datetime
-    min_freq_hz: int
-    max_freq_hz: int
-
-    description: str = ""
-
-    # ODS-specific fields for the zms-ra RAObservation model
     site_id: str = ""
     site_lat: float = 0.0
     site_lon: float = 0.0
@@ -37,6 +27,25 @@ class Observation:
     trk_rate_dec: float | None = None
     subarray: int = 0
     dish_diameter_m: float | None = None
+
+
+@dataclass(frozen=True)
+class Observation:
+    """A scheduled RA observation from an external source.
+
+    Core fields are common to every source. `target` is populated only by
+    sources that carry sky-pointing info (ODS); calendar events leave it None.
+    """
+
+    ext_id: str
+    name: str
+    start: datetime.datetime
+    end: datetime.datetime
+    min_freq_hz: int
+    max_freq_hz: int
+
+    description: str = ""
+    target: ObsTarget | None = None
 
 
 class RASource(Protocol):

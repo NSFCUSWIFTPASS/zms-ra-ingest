@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from .protocol import Observation
+from .protocol import Observation, ObsTarget
 
 LOG = logging.getLogger(__name__)
 
@@ -93,14 +93,7 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
     # ODS doesn't have an explicit ID, so we compose one.
     ext_id = f"{site_id}:{src_id}:{item['src_start_utc']}:{subarray}"
 
-    return Observation(
-        ext_id=ext_id,
-        name=f"{src_id} ({site_id})",
-        start=start,
-        end=end,
-        min_freq_hz=int(item["freq_lower_hz"]),
-        max_freq_hz=int(item["freq_upper_hz"]),
-        description=f"site={site_id} src={src_id} subarray={subarray}",
+    target = ObsTarget(
         site_id=site_id,
         site_lat=float(item.get("site_lat_deg", 0) or 0),
         site_lon=float(item.get("site_lon_deg", 0) or 0),
@@ -118,4 +111,15 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
             if item.get("dish_diameter_m") is not None
             else None
         ),
+    )
+
+    return Observation(
+        ext_id=ext_id,
+        name=f"{src_id} ({site_id})",
+        start=start,
+        end=end,
+        min_freq_hz=int(item["freq_lower_hz"]),
+        max_freq_hz=int(item["freq_upper_hz"]),
+        description=f"site={site_id} src={src_id} subarray={subarray}",
+        target=target,
     )

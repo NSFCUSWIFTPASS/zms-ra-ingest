@@ -7,7 +7,7 @@ import datetime
 from unittest.mock import MagicMock
 
 from ra_ingest.reconciler import _record_matches, _record_started, reconcile
-from ra_ingest.sources.protocol import Observation
+from ra_ingest.sources.protocol import Observation, ObsTarget
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,11 +28,13 @@ def _make_obs(
         end=NOW + datetime.timedelta(hours=end_offset_hours),
         min_freq_hz=min_freq,
         max_freq_hz=max_freq,
-        site_id="ATA",
-        site_lat=40.8,
-        site_lon=-121.5,
-        site_elevation=1000.0,
-        source_id="ASP",
+        target=ObsTarget(
+            site_id="ATA",
+            site_lat=40.8,
+            site_lon=-121.5,
+            site_elevation=1000.0,
+            source_id="ASP",
+        ),
     )
 
 
