@@ -139,12 +139,13 @@ def _try_create(
 ) -> None:
     spectrum = picker.pick(obs.min_freq_hz, obs.max_freq_hz)
     if spectrum is None:
-        LOG.warning(
+        LOG.error(
             "No spectrum covers %s (%d-%d Hz); skipping",
             obs.ext_id,
             obs.min_freq_hz,
             obs.max_freq_hz,
         )
+        stats.errors += 1
         return
     try:
         body = _build_claim(obs, element_id, str(spectrum.id), source)

@@ -318,3 +318,16 @@ class TestReconcileGcal:
 
         assert stats.deleted == 0
         assert stats.errors == 1
+
+    def test_no_covering_spectrum_counted_as_error(self):
+        obs = _make_obs("gcal-nospec")
+        source = _make_source([obs])
+        client = _make_client(existing_claims=[])
+        picker = _make_picker()
+        picker.pick.return_value = None  # no spectrum covers the event
+
+        stats = reconcile_gcal(client, source, ELEMENT_ID, picker, now=NOW)
+
+        assert stats.created == 0
+        assert stats.errors == 1
+        client.create_claim.assert_not_called()
