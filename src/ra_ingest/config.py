@@ -39,11 +39,13 @@ class Settings(BaseSettings):
         default=28,
         description="How far ahead of now to pull calendar events (days)",
     )
-    gcal_min_freq: float = Field(
-        default=1000, description="Min frequency (MHz) for calendar claims"
+    gcal_default_min_freq: float = Field(
+        default=1000,
+        description="Fallback min frequency (MHz) when an event has no parseable freq info",
     )
-    gcal_max_freq: float = Field(
-        default=2000, description="Max frequency (MHz) for calendar claims"
+    gcal_default_max_freq: float = Field(
+        default=2000,
+        description="Fallback max frequency (MHz) when an event has no parseable freq info",
     )
     gcal_filter_exc: str = Field(
         default="", description="Comma-separated regexps to exclude calendar events"
