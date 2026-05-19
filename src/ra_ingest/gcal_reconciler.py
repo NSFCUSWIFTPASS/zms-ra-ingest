@@ -29,7 +29,7 @@ from zmsclient.zmc.v1.models import (
 )
 
 from .sources.gcal import GcalSource
-from .sources.protocol import Observation
+from .sources.protocol import Observation, SourceFetchError
 from .spectrum_picker import SpectrumPicker
 
 LOG = logging.getLogger(__name__)
@@ -60,7 +60,15 @@ def reconcile_gcal(
 
     picker.refresh()
 
-    desired = {obs.ext_id: obs for obs in source.fetch_observations()}
+    # A failed gcal fetch must NOT fall through to set-diff -- desired={}
+    # would delete every future Claim+Grant on the element during a brief
+    # Google Calendar API outage.
+    try:
+        desired = {obs.ext_id: obs for obs in source.fetch_observations()}
+    except SourceFetchError:
+        LOG.error("Gcal fetch failed; skipping reconcile to preserve ZMS state")
+        stats.errors += 1
+        return stats
     current = {
         c.ext_id: c
         for c in _list_claims(client, element_id, source.ext_id_prefix)

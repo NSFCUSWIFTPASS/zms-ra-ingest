@@ -331,3 +331,24 @@ class TestReconcileGcal:
         assert stats.created == 0
         assert stats.errors == 1
         client.create_claim.assert_not_called()
+
+    def test_source_fetch_failure_preserves_state(self):
+        """Gcal source raises SourceFetchError -> no destructive action."""
+        from ra_ingest.sources.protocol import SourceFetchError
+
+        future_claim = _make_claim(
+            "gcal-future",
+            NOW + datetime.timedelta(hours=3),
+            NOW + datetime.timedelta(hours=4),
+        )
+        source = _make_source([])
+        source.fetch_observations.side_effect = SourceFetchError("gcal API down")
+        client = _make_client(existing_claims=[future_claim])
+
+        stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
+
+        assert stats.errors == 1
+        assert stats.deleted == 0
+        assert stats.created == 0
+        client.delete_claim.assert_not_called()
+        client.create_claim.assert_not_called()

@@ -27,7 +27,7 @@ from re import Pattern
 
 from zmsclient.tools.grant.gcal import get_events
 
-from .protocol import Observation
+from .protocol import Observation, SourceFetchError
 
 LOG = logging.getLogger(__name__)
 
@@ -90,9 +90,15 @@ class GcalSource:
                 self._filter_exc,
                 self._filter_inc,
             )
-        except Exception:
+        except SystemExit as e:
+            # zmsclient.tools.grant.gcal.get_events sys.exit()s on non-200.
+            # Convert to a recoverable error so the reconciler can skip
+            # this cycle's half instead of treating "no events" as truth.
+            LOG.error("Calendar API returned non-200: %s", e)
+            raise SourceFetchError(f"gcal API error: {e}") from e
+        except Exception as e:
             LOG.exception("Failed to fetch gcal events")
-            return []
+            raise SourceFetchError(f"gcal fetch failed: {e}") from e
 
         observations: list[Observation] = []
         for event in events:

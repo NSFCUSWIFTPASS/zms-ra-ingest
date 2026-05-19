@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from .protocol import Observation, ObsTarget
+from .protocol import Observation, ObsTarget, SourceFetchError
 
 LOG = logging.getLogger(__name__)
 
@@ -58,9 +58,9 @@ class OdsSource:
         try:
             resp = self._client.get(self._url)
             resp.raise_for_status()
-        except httpx.HTTPError:
+        except httpx.HTTPError as e:
             LOG.exception("Failed to fetch from %s", self._url)
-            return []
+            raise SourceFetchError(f"ODS fetch failed: {e}") from e
 
         raw = resp.json()
         ods_data = raw.get("ods_data", [])

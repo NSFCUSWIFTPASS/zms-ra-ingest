@@ -3,6 +3,8 @@
 import datetime
 from unittest.mock import patch
 
+import pytest
+
 from ra_ingest.sources.gcal import (
     GcalSource,
     _event_to_observation,
@@ -183,7 +185,9 @@ class TestGcalSource:
         assert obs_list[1].ext_id == "gcal-b"
         assert obs_list[1].min_freq_hz == 902_000_000  # parsed
 
-    def test_fetch_handles_error(self):
+    def test_fetch_raises_on_network_error(self):
+        from ra_ingest.sources.protocol import SourceFetchError
+
         src = GcalSource(
             source_type="gcal",
             source_name="ata",
@@ -195,4 +199,23 @@ class TestGcalSource:
         with patch(
             "ra_ingest.sources.gcal.get_events", side_effect=RuntimeError("boom")
         ):
-            assert src.fetch_observations() == []
+            with pytest.raises(SourceFetchError):
+                src.fetch_observations()
+
+    def test_fetch_raises_on_api_non_200(self):
+        """David's get_events sys.exit()s on non-200; we convert to SourceFetchError."""
+        from ra_ingest.sources.protocol import SourceFetchError
+
+        src = GcalSource(
+            source_type="gcal",
+            source_name="ata",
+            calendar_id="cal-id",
+            calendar_token="tok",
+            default_min_freq_hz=0,
+            default_max_freq_hz=0,
+        )
+        with patch(
+            "ra_ingest.sources.gcal.get_events", side_effect=SystemExit("403")
+        ):
+            with pytest.raises(SourceFetchError):
+                src.fetch_observations()

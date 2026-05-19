@@ -18,7 +18,7 @@ from zmsclient.zmc.client import ZmsZmcClient
 
 from .grant_matcher import fetch_gcal_grants, find_matching_grant
 from .ra_client import ZmsRaClient, observation_to_ra_body
-from .sources.protocol import Observation, RASource
+from .sources.protocol import Observation, RASource, SourceFetchError
 
 LOG = logging.getLogger(__name__)
 
@@ -43,8 +43,15 @@ def reconcile(
     stats = ReconcileStats()
     now = now or datetime.datetime.now(datetime.UTC)
 
-    # Fetch desired state from the source
-    desired = {obs.ext_id: obs for obs in source.fetch_observations()}
+    # Fetch desired state from the source. A failed fetch must NOT fall
+    # through to set-diff -- desired={} would soft-delete every future
+    # RAObservation in zms-ra during a brief ODS outage.
+    try:
+        desired = {obs.ext_id: obs for obs in source.fetch_observations()}
+    except SourceFetchError:
+        LOG.error("Source fetch failed; skipping reconcile to preserve ZMS state")
+        stats.errors += 1
+        return stats
 
     # Fetch current state from zms-ra. zms-ra has no type/source filter,
     # so we list everything and trust we own these records.

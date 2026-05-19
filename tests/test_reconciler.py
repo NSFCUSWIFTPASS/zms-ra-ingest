@@ -321,3 +321,23 @@ class TestReconcile:
 
         assert stats.errors == 1
         assert stats.deleted == 0
+
+    def test_source_fetch_failure_preserves_state(self):
+        """Source raises SourceFetchError -> no destructive action; cycle errored."""
+        from ra_ingest.sources.protocol import SourceFetchError
+
+        future_start = NOW + datetime.timedelta(hours=3)
+        future_end = NOW + datetime.timedelta(hours=4)
+        rec = _make_record("obs-1", future_start, future_end)
+        source = _make_source([])
+        source.fetch_observations.side_effect = SourceFetchError("ODS down")
+        zmc_client = _make_zmc_client(grants=[])
+        ra_client = _make_ra_client(existing_records=[rec])
+
+        stats = reconcile(zmc_client, ra_client, source, "elem-1", now=NOW)
+
+        assert stats.errors == 1
+        assert stats.deleted == 0
+        assert stats.created == 0
+        ra_client.delete_observation.assert_not_called()
+        ra_client.create_observation.assert_not_called()

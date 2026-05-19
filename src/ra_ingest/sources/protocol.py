@@ -5,6 +5,15 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+class SourceFetchError(Exception):
+    """Raised by a RASource when it could not retrieve the desired state.
+
+    Distinct from an empty result. A reconciler that sees this MUST NOT
+    treat the desired state as empty -- doing so would soft-delete every
+    future record in ZMS during a source outage.
+    """
+
+
 @dataclass(frozen=True)
 class ObsTarget:
     """Sky-pointing + site metadata for a single observation.

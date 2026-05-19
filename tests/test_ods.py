@@ -118,8 +118,11 @@ class TestOdsSource:
         assert len(observations) == 0
 
     @patch("ra_ingest.sources.ods.httpx.Client")
-    def test_fetch_handles_http_error(self, mock_client_cls):
+    def test_fetch_raises_on_http_error(self, mock_client_cls):
         import httpx
+        import pytest
+
+        from ra_ingest.sources.protocol import SourceFetchError
 
         mock_client = MagicMock()
         mock_client.get.side_effect = httpx.HTTPError("connection failed")
@@ -128,9 +131,9 @@ class TestOdsSource:
         source = OdsSource(
             source_type="ra-ods", source_name="hcro", url="http://example.com/ods.json"
         )
-        observations = source.fetch_observations()
 
-        assert len(observations) == 0
+        with pytest.raises(SourceFetchError):
+            source.fetch_observations()
 
     @patch("ra_ingest.sources.ods.httpx.Client")
     def test_fetch_skips_bad_entries(self, mock_client_cls):
