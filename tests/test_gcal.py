@@ -214,8 +214,6 @@ class TestGcalSource:
             default_min_freq_hz=0,
             default_max_freq_hz=0,
         )
-        with patch(
-            "ra_ingest.sources.gcal.get_events", side_effect=SystemExit("403")
-        ):
+        with patch("ra_ingest.sources.gcal.get_events", side_effect=SystemExit("403")):
             with pytest.raises(SourceFetchError):
                 src.fetch_observations()
