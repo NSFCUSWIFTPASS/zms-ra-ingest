@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,9 @@ def configure(path: str | None) -> None:
     audit.propagate = False
     for h in list(audit.handlers):
         audit.removeHandler(h)
-    handler = logging.FileHandler(str(p))
+    # Rotate at UTC midnight; backupCount=0 keeps every file forever.
+    # Old files get a date suffix (e.g. ra-ingest-audit.jsonl.2026-05-27).
+    handler = TimedRotatingFileHandler(str(p), when="midnight", utc=True, backupCount=0)
     handler.setFormatter(logging.Formatter("%(message)s"))
     audit.addHandler(handler)
     _audit_logger = audit
