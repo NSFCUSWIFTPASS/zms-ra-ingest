@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from zmsclient.zmc.client import ZmsZmcClient
 
+from .audit import audit
 from .grant_matcher import fetch_gcal_grants, find_matching_grant
 from .ra_client import ZmsRaClient, observation_to_ra_body
 from .sources.protocol import Observation, RASource, SourceFetchError
@@ -93,6 +94,16 @@ def reconcile(
         else:
             stats.unchanged += 1
 
+    audit(
+        "ods_cycle",
+        source_type=source.source_type,
+        source_name=source.source_name,
+        created=stats.created,
+        deleted=stats.deleted,
+        unchanged=stats.unchanged,
+        unmatched=stats.unmatched,
+        errors=stats.errors,
+    )
     return stats
 
 
@@ -111,6 +122,14 @@ def _try_create(
                 obs.start,
                 obs.end,
             )
+            audit(
+                "raobs_unmatched",
+                ext_id=obs.ext_id,
+                start=obs.start,
+                end=obs.end,
+                min_freq_hz=obs.min_freq_hz,
+                max_freq_hz=obs.max_freq_hz,
+            )
             stats.unmatched += 1
             return
 
@@ -118,6 +137,15 @@ def _try_create(
         result = ra_client.create_observation(body)
         if result is not None:
             LOG.info("Created raobservation for %s (grant=%s)", obs.ext_id, grant_id)
+            audit(
+                "raobs_created",
+                ext_id=obs.ext_id,
+                grant_id=grant_id,
+                start=obs.start,
+                end=obs.end,
+                min_freq_hz=obs.min_freq_hz,
+                max_freq_hz=obs.max_freq_hz,
+            )
             stats.created += 1
         else:
             stats.errors += 1
@@ -134,6 +162,7 @@ def _try_delete(ra_client: ZmsRaClient, rec: dict, stats: ReconcileStats) -> Non
             return
         if ra_client.delete_observation(str(rec_id)):
             LOG.info("Deleted raobservation %s", rec_id)
+            audit("raobs_deleted", ext_id=str(rec_id))
             stats.deleted += 1
         else:
             stats.errors += 1

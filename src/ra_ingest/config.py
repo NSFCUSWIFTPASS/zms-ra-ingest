@@ -26,6 +26,12 @@ class Settings(BaseSettings):
         default=300, description="Seconds between poll cycles"
     )
 
+    # Audit logging (durable artifact capture, separate from stderr operational log)
+    audit_log_path: str = Field(
+        default="",
+        description="Path to JSONL audit log (empty = disabled)",
+    )
+
     # Sources are configured via JSON file, not env vars
     sources_config: str = Field(
         default="sources.json",

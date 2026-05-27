@@ -28,6 +28,7 @@ from zmsclient.zmc.v1.models import (
     GrantOpStatus,
 )
 
+from .audit import audit
 from .sources.gcal import GcalSource
 from .sources.protocol import Observation, SourceFetchError
 from .spectrum_picker import SpectrumPicker
@@ -104,6 +105,13 @@ def reconcile_gcal(
             _try_delete(client, claim, stats)
             _try_create(client, obs, element_id, picker, source, stats)
 
+    audit(
+        "gcal_cycle",
+        created=stats.created,
+        deleted=stats.deleted,
+        unchanged=stats.unchanged,
+        errors=stats.errors,
+    )
     return stats
 
 
@@ -164,6 +172,17 @@ def _try_create(
                 obs.ext_id,
                 spectrum.name,
             )
+            audit(
+                "gcal_claim_created",
+                ext_id=obs.ext_id,
+                name=obs.name,
+                spectrum_id=str(spectrum.id),
+                spectrum_name=spectrum.name,
+                starts_at=obs.start,
+                expires_at=obs.end,
+                min_freq_hz=obs.min_freq_hz,
+                max_freq_hz=obs.max_freq_hz,
+            )
             stats.created += 1
         else:
             LOG.error(
@@ -186,6 +205,11 @@ def _try_delete(
         resp = client.delete_claim(claim_id=str(claim.id))
         if resp.is_success:
             LOG.info("Deleted gcal claim %s (ext_id=%s)", claim.id, claim.ext_id)
+            audit(
+                "gcal_claim_deleted",
+                ext_id=claim.ext_id,
+                claim_id=str(claim.id),
+            )
             stats.deleted += 1
         else:
             LOG.error("Failed to delete gcal claim %s: %s", claim.id, resp.status_code)
