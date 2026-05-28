@@ -110,6 +110,32 @@ class TestEventToObservation:
         assert obs.min_freq_hz == 902_000_000
         assert obs.max_freq_hz == 928_000_000
 
+    def test_hcro_transmission_runon_single_line(self):
+        # Real calendar events pack every field onto one line with no
+        # delimiter between the title and the next label ("TransmissionStart").
+        # The name must stop at "Start Date:", not swallow the whole blob.
+        event = _mkevent(
+            id="hcro-runon",
+            summary=(
+                "Activity Title: HCRO TransmissionStart Date: 05/28/2026 "
+                "Start Time: 10:00 End Date: 05/28/2026 End Time: 16:00 "
+                "Center Frequency: 915 (MHz) Bandwidth: 26 MHz"
+            ),
+        )
+        obs = _event_to_observation(event, "gcal-", 1000, 2000)
+        assert obs is not None
+        assert obs.name == "HCRO Transmission"
+        assert obs.min_freq_hz == 902_000_000
+        assert obs.max_freq_hz == 928_000_000
+
+    def test_activity_title_with_no_trailing_fields(self):
+        # A clean "Activity Title: X" with no following labels still resolves
+        # to X (the end-of-string branch of the title regex).
+        event = _mkevent(id="clean", summary="Activity Title: Just A Title")
+        obs = _event_to_observation(event, "gcal-", 0, 0)
+        assert obs is not None
+        assert obs.name == "Just A Title"
+
     def test_no_id_returns_none(self):
         event = _mkevent(id=None)
         assert _event_to_observation(event, "gcal-", 0, 0) is None
