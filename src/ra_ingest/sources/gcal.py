@@ -35,7 +35,15 @@ _CENTER_FREQ_RE = re.compile(
     r"Center Frequency:\s*(\d+(?:\.\d+)?)\s*\(?\s*MHz\s*\)?", re.IGNORECASE
 )
 _BANDWIDTH_RE = re.compile(r"Bandwidth:\s*(\d+(?:\.\d+)?)\s*MHz", re.IGNORECASE)
-_ACTIVITY_TITLE_RE = re.compile(r"Activity Title:\s*(.+)", re.IGNORECASE)
+# The "Activity Title:" value is terminated by the next labeled field rather
+# than a delimiter -- some facilities pack every field onto one run-on line
+# (e.g. "HCRO TransmissionStart Date: ..."), so a greedy match would swallow
+# the whole blob. Capture lazily and stop at the next known label (or end).
+_ACTIVITY_TITLE_RE = re.compile(
+    r"Activity Title:\s*(.+?)\s*"
+    r"(?=Start Date:|Start Time:|End Date:|End Time:|Center Frequency:|Bandwidth:|$)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class GcalSource:
