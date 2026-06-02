@@ -13,8 +13,8 @@ from zmsclient.zmc.v1.models import (
 )
 
 from ra_ingest.gcal_reconciler import (
+    _claim_ended,
     _claim_matches,
-    _claim_started,
     reconcile_gcal,
 )
 from ra_ingest.sources.protocol import Observation
@@ -117,33 +117,33 @@ def _make_client(existing_claims=None):
 
 
 # ---------------------------------------------------------------------------
-# _claim_started
+# _claim_ended
 # ---------------------------------------------------------------------------
 
 
-class TestClaimStarted:
+class TestClaimEnded:
     def test_future_claim(self):
         c = _make_claim(
             "x", NOW + datetime.timedelta(hours=1), NOW + datetime.timedelta(hours=2)
         )
-        assert _claim_started(c, NOW) is False
+        assert _claim_ended(c, NOW) is False
 
     def test_past_claim(self):
         c = _make_claim(
             "x", NOW - datetime.timedelta(hours=2), NOW - datetime.timedelta(hours=1)
         )
-        assert _claim_started(c, NOW) is True
+        assert _claim_ended(c, NOW) is True
 
     def test_active_claim(self):
         c = _make_claim(
             "x", NOW - datetime.timedelta(hours=1), NOW + datetime.timedelta(hours=1)
         )
-        assert _claim_started(c, NOW) is True
+        assert _claim_ended(c, NOW) is False
 
     def test_no_grant_is_conservative(self):
         c = MagicMock(spec=Claim)
         c.grant = None
-        assert _claim_started(c, NOW) is True
+        assert _claim_ended(c, NOW) is True
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +230,9 @@ class TestReconcileGcal:
         assert stats.unchanged == 1
         client.delete_claim.assert_not_called()
 
-    def test_keep_active_claim_not_in_source(self):
+    def test_delete_active_claim_not_in_source(self):
+        # An active block removed from the calendar frees the band: only an
+        # already-ended claim is preserved now.
         c = _make_claim(
             "gcal-active",
             NOW - datetime.timedelta(hours=1),
@@ -241,9 +243,8 @@ class TestReconcileGcal:
 
         stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
-        assert stats.deleted == 0
-        assert stats.unchanged == 1
-        client.delete_claim.assert_not_called()
+        assert stats.deleted == 1
+        client.delete_claim.assert_called_once_with(claim_id="claim-id-gcal-active")
 
     def test_recreate_drifted_future_claim(self):
         old_start = NOW + datetime.timedelta(hours=2)
@@ -258,19 +259,21 @@ class TestReconcileGcal:
         assert stats.deleted == 1
         assert stats.created == 1
 
-    def test_no_recreate_drifted_active_claim(self):
+    def test_recreate_drifted_active_claim(self):
+        # Editing an active block (e.g. shortening it) now recreates the claim
+        # with the new window; only ended claims are left untouched.
         active_start = NOW - datetime.timedelta(hours=1)
-        active_end = NOW + datetime.timedelta(hours=1)
+        active_end = NOW + datetime.timedelta(hours=3)
         c = _make_claim("gcal-active", active_start, active_end)
-        new_obs = _make_obs("gcal-active", start_offset=-2, end_offset=2)
+        # Shorten: same start, end pulled in from +3h to +1h (still future).
+        new_obs = _make_obs("gcal-active", start_offset=-1, end_offset=1)
         source = _make_source([new_obs])
         client = _make_client(existing_claims=[c])
 
         stats = reconcile_gcal(client, source, ELEMENT_ID, _make_picker(), now=NOW)
 
-        assert stats.deleted == 0
-        assert stats.created == 0
-        assert stats.unchanged == 1
+        assert stats.deleted == 1
+        assert stats.created == 1
 
     def test_filters_by_ext_id_prefix(self):
         """list_claims returns claims that don't match our prefix -- filter them out."""
