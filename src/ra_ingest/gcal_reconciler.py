@@ -7,7 +7,7 @@ these claims' grants via grant_id.
 Follows the same stateless-diff pattern as the ODS reconciler:
   1. Fetch desired Observations from the source
   2. Fetch current claims from ZMC (scoped by ext_id prefix)
-  3. Create new claims, delete cancelled ones (only if not started),
+  3. Create new claims, delete cancelled ones (unless already ended),
      recreate claims whose time/freq has drifted
 """
 
@@ -80,10 +80,10 @@ def reconcile_gcal(
     for ext_id in desired.keys() - current.keys():
         _try_create(client, desired[ext_id], element_id, picker, source, stats)
 
-    # Vanished observations -> delete if not yet started
+    # Vanished observations -> delete unless the grant has already ended
     for ext_id in current.keys() - desired.keys():
         claim = current[ext_id]
-        if _claim_started(claim, now):
+        if _claim_ended(claim, now):
             stats.unchanged += 1
         else:
             _try_delete(client, claim, stats)
@@ -95,9 +95,9 @@ def reconcile_gcal(
         if _claim_matches(claim, obs):
             stats.unchanged += 1
             continue
-        if _claim_started(claim, now):
+        if _claim_ended(claim, now):
             LOG.warning(
-                "Observation %s changed but claim already started -- leaving as-is",
+                "Observation %s changed but claim already ended -- leaving as-is",
                 ext_id,
             )
             stats.unchanged += 1
@@ -257,17 +257,17 @@ def _build_claim(
     )
 
 
-def _claim_started(claim: Claim, now: datetime.datetime) -> bool:
-    """True if the claim's grant has already started."""
+def _claim_ended(claim: Claim, now: datetime.datetime) -> bool:
+    """True if the claim's grant has already ended (expired)."""
     if not isinstance(claim.grant, Grant):
-        return True  # be conservative -- don't delete what we don't understand
+        return True  # be conservative -- don't touch what we don't understand
     grant: Grant = claim.grant
-    start = grant.starts_at
-    if not isinstance(start, datetime.datetime):
+    end = grant.expires_at
+    if not isinstance(end, datetime.datetime):
         return True
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=datetime.UTC)
-    return start <= now
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=datetime.UTC)
+    return end <= now
 
 
 def _claim_matches(claim: Claim, obs: Observation) -> bool:
