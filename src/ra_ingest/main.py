@@ -12,7 +12,6 @@ import time
 
 from zmsclient.zmc.client import ZmsZmcClient
 
-from .audit import configure as configure_audit
 from .config import Settings
 from .gcal_reconciler import reconcile_gcal
 from .ra_client import ZmsRaClient
@@ -103,8 +102,6 @@ def main():
     settings = Settings()
 
     logging.basicConfig(format=LOG_FORMAT, level=settings.log_level, stream=sys.stderr)
-    configure_audit(settings.audit_log_path)
-
     zmc_client = ZmsZmcClient(
         base_url=settings.zmc_url,
         token=settings.token,
@@ -119,7 +116,8 @@ def main():
     gcal_source = _build_gcal_source(settings)
 
     LOG.info(
-        "Starting zms-ra-ingest: %d ODS source(s), gcal lookahead %dd, polling every %ds",
+        "Starting zms-ra-ingest: %d ODS source(s), gcal lookahead %dd, "
+        "polling every %ds",
         len(ods_sources),
         settings.gcal_lookahead_days,
         settings.poll_interval_seconds,
