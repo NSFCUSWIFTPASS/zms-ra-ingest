@@ -8,7 +8,7 @@ import pytest
 from ra_ingest.sources.gcal import (
     GcalSource,
     _event_to_observation,
-    _parse_freq_from_summary,
+    _parse_freq,
 )
 
 UTC = datetime.UTC
@@ -16,11 +16,11 @@ NOW = datetime.datetime(2026, 4, 14, 12, 0, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
-# _parse_freq_from_summary
+# _parse_freq
 # ---------------------------------------------------------------------------
 
 
-class TestParseFreqFromSummary:
+class TestParseFreq:
     def test_hcro_transmission_format(self):
         summary = (
             "Activity Title: HCRO Transmission\n"
@@ -31,40 +31,29 @@ class TestParseFreqFromSummary:
             "Center Frequency: 915 (MHz)\n"
             "Bandwidth: 26 MHz"
         )
-        min_hz, max_hz = _parse_freq_from_summary(summary, 1_000_000_000, 2_000_000_000)
         # 915 ± 13 MHz -> 902-928 MHz
-        assert min_hz == 902_000_000
-        assert max_hz == 928_000_000
+        assert _parse_freq(summary) == (902_000_000, 928_000_000)
 
-    def test_missing_freq_uses_default(self):
-        summary = "[ASP] Year 2 Session 225"
-        min_hz, max_hz = _parse_freq_from_summary(summary, 1_000_000_000, 2_000_000_000)
-        assert min_hz == 1_000_000_000
-        assert max_hz == 2_000_000_000
+    def test_missing_freq_returns_none(self):
+        assert _parse_freq("[ASP] Year 2 Session 225") is None
 
     def test_fractional_values(self):
-        summary = "Center Frequency: 1420.5 MHz\nBandwidth: 1.5 MHz"
-        min_hz, max_hz = _parse_freq_from_summary(summary, 0, 0)
-        assert min_hz == 1_419_750_000  # 1420.5 - 0.75
-        assert max_hz == 1_421_250_000  # 1420.5 + 0.75
+        assert _parse_freq("Center Frequency: 1420.5 MHz\nBandwidth: 1.5 MHz") == (
+            1_419_750_000,  # 1420.5 - 0.75
+            1_421_250_000,  # 1420.5 + 0.75
+        )
 
-    def test_only_center_no_bandwidth_uses_default(self):
-        summary = "Center Frequency: 915 MHz"
-        min_hz, max_hz = _parse_freq_from_summary(summary, 100, 200)
-        assert min_hz == 100
-        assert max_hz == 200
+    def test_only_center_no_bandwidth_returns_none(self):
+        assert _parse_freq("Center Frequency: 915 MHz") is None
 
-    def test_only_bandwidth_no_center_uses_default(self):
-        summary = "Bandwidth: 26 MHz"
-        min_hz, max_hz = _parse_freq_from_summary(summary, 100, 200)
-        assert min_hz == 100
-        assert max_hz == 200
+    def test_only_bandwidth_no_center_returns_none(self):
+        assert _parse_freq("Bandwidth: 26 MHz") is None
 
     def test_case_insensitive(self):
-        summary = "center frequency: 915 mhz\nbandwidth: 26 mhz"
-        min_hz, max_hz = _parse_freq_from_summary(summary, 0, 0)
-        assert min_hz == 902_000_000
-        assert max_hz == 928_000_000
+        assert _parse_freq("center frequency: 915 mhz\nbandwidth: 26 mhz") == (
+            902_000_000,
+            928_000_000,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +125,29 @@ class TestEventToObservation:
         assert obs is not None
         assert obs.name == "Just A Title"
 
+    def test_freq_from_description_fallback(self):
+        # Observatory sets only a plain title; freq lives in the description.
+        event = _mkevent(
+            id="desc-freq",
+            summary="[ASP] Year 2 Session 300",
+            description="Center Frequency: 915 (MHz)\nBandwidth: 26 MHz",
+        )
+        obs = _event_to_observation(event, "gcal-", 1000, 2000)
+        assert obs is not None
+        assert obs.name == "[ASP] Year 2 Session 300"  # name from native title
+        assert obs.min_freq_hz == 902_000_000  # freq from description
+        assert obs.max_freq_hz == 928_000_000
+
+    def test_summary_freq_wins_over_description(self):
+        event = _mkevent(
+            id="both",
+            summary="Center Frequency: 915 (MHz)\nBandwidth: 26 MHz",
+            description="Center Frequency: 1420 (MHz)\nBandwidth: 10 MHz",
+        )
+        obs = _event_to_observation(event, "gcal-", 0, 0)
+        assert obs is not None
+        assert obs.min_freq_hz == 902_000_000  # title wins, not description
+
     def test_no_id_returns_none(self):
         event = _mkevent(id=None)
         assert _event_to_observation(event, "gcal-", 0, 0) is None
@@ -199,7 +211,10 @@ class TestGcalSource:
             _mkevent(id="a", summary="regular"),
             _mkevent(
                 id="b",
-                summary="Activity Title: HCRO Transmission\nCenter Frequency: 915 (MHz)\nBandwidth: 26 MHz",
+                summary=(
+                    "Activity Title: HCRO Transmission\n"
+                    "Center Frequency: 915 (MHz)\nBandwidth: 26 MHz"
+                ),
             ),
         ]
         with patch("ra_ingest.sources.gcal.get_events", return_value=fake_events):

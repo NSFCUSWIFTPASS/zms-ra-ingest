@@ -149,6 +149,7 @@ def _event_to_observation(
         end = datetime.datetime.combine(end, datetime.time.min, tzinfo=datetime.UTC)
 
     summary = event.get("summary") or ""
+    description = event.get("description") or ""
 
     # Prefer "Activity Title:" line for name; fall back to first summary line.
     name = summary.split("\n", 1)[0].strip() if summary else event_id
@@ -156,9 +157,9 @@ def _event_to_observation(
     if m:
         name = m.group(1).strip()
 
-    min_freq_hz, max_freq_hz = _parse_freq_from_summary(
-        summary, default_min_freq_hz, default_max_freq_hz
-    )
+    # Frequency: title (summary) first, then the description, then defaults.
+    freq = _parse_freq(summary) or _parse_freq(description)
+    min_freq_hz, max_freq_hz = freq or (default_min_freq_hz, default_max_freq_hz)
 
     return Observation(
         ext_id=f"{ext_id_prefix}{event_id}",
@@ -167,27 +168,23 @@ def _event_to_observation(
         end=end,
         min_freq_hz=min_freq_hz,
         max_freq_hz=max_freq_hz,
-        description=event.get("description") or summary,
+        description=description or summary,
     )
 
 
-def _parse_freq_from_summary(
-    summary: str,
-    default_min_freq_hz: int,
-    default_max_freq_hz: int,
-) -> tuple[int, int]:
-    """Extract center freq + bandwidth from the summary, or fall back to defaults.
+def _parse_freq(text: str) -> tuple[int, int] | None:
+    """Extract (min_hz, max_hz) from center freq + bandwidth in text, or None.
 
     Matches patterns like:
       Center Frequency: 915 (MHz)
       Bandwidth: 26 MHz
     """
-    cf = _CENTER_FREQ_RE.search(summary)
-    bw = _BANDWIDTH_RE.search(summary)
+    cf = _CENTER_FREQ_RE.search(text)
+    bw = _BANDWIDTH_RE.search(text)
     if cf and bw:
         cf_mhz = float(cf.group(1))
         bw_mhz = float(bw.group(1))
         min_mhz = cf_mhz - bw_mhz / 2
         max_mhz = cf_mhz + bw_mhz / 2
         return int(min_mhz * 1_000_000), int(max_mhz * 1_000_000)
-    return default_min_freq_hz, default_max_freq_hz
+    return None

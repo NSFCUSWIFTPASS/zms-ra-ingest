@@ -26,12 +26,6 @@ class Settings(BaseSettings):
         default=300, description="Seconds between poll cycles"
     )
 
-    # Audit logging (durable artifact capture, separate from stderr operational log)
-    audit_log_path: str = Field(
-        default="",
-        description="Path to JSONL audit log (empty = disabled)",
-    )
-
     # Sources are configured via JSON file, not env vars
     sources_config: str = Field(
         default="sources.json",
@@ -47,11 +41,15 @@ class Settings(BaseSettings):
     )
     gcal_default_min_freq: float = Field(
         default=1000,
-        description="Fallback min frequency (MHz) when an event has no parseable freq info",
+        description=(
+            "Fallback min frequency (MHz) when an event has no parseable freq info"
+        ),
     )
     gcal_default_max_freq: float = Field(
         default=2000,
-        description="Fallback max frequency (MHz) when an event has no parseable freq info",
+        description=(
+            "Fallback max frequency (MHz) when an event has no parseable freq info"
+        ),
     )
     gcal_filter_exc: str = Field(
         default="", description="Comma-separated regexps to exclude calendar events"
