@@ -44,6 +44,10 @@ class OdsSource:
         self._url = url
         self._source_type = source_type
         self._source_name = source_name
+        # Fold source_name into the prefix so multiple ODS facilities stay
+        # isolated -- otherwise one facility's reconcile would treat another's
+        # claims as vanished and delete them.
+        self._ext_id_prefix = f"ods-{source_name}-"
         self._client = httpx.Client(timeout=30.0)
 
     @property
@@ -53,6 +57,18 @@ class OdsSource:
     @property
     def source_name(self) -> str:
         return self._source_name
+
+    @property
+    def ext_id_prefix(self) -> str:
+        return self._ext_id_prefix
+
+    @property
+    def protect_started(self) -> bool:
+        return True  # ODS feed flaps; a live observation must not be torn down.
+
+    @property
+    def writes_observations(self) -> bool:
+        return True  # ODS carries sky-pointing metadata -> RAObservation.
 
     def fetch_observations(self) -> list[Observation]:
         try:
@@ -67,7 +83,7 @@ class OdsSource:
         observations: list[Observation] = []
         for item in ods_data:
             try:
-                obs = _parse_ods_entry(item)
+                obs = _parse_ods_entry(item, self._ext_id_prefix)
                 observations.append(obs)
             except Exception:
                 LOG.exception("Failed to parse ODS entry: %r", item)
@@ -76,7 +92,7 @@ class OdsSource:
         return observations
 
 
-def _parse_ods_entry(item: dict[str, Any]) -> Observation:
+def _parse_ods_entry(item: dict[str, Any], ext_id_prefix: str) -> Observation:
     """Parse a single ODS observation entry."""
     start = datetime.datetime.fromisoformat(item["src_start_utc"]).replace(
         tzinfo=datetime.UTC
@@ -89,9 +105,8 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
     src_id = item.get("src_id", "")
     subarray = int(item.get("subarray", 0))
 
-    # Build a stable ext_id from the fields that uniquely identify this observation.
-    # ODS doesn't have an explicit ID, so we compose one.
-    ext_id = f"{site_id}:{src_id}:{item['src_start_utc']}:{subarray}"
+    # ODS has no record id; compose a stable one from the identifying fields.
+    ext_id = f"{ext_id_prefix}{site_id}:{src_id}:{item['src_start_utc']}:{subarray}"
 
     target = ObsTarget(
         site_id=site_id,
@@ -113,13 +128,19 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
         ),
     )
 
+    # Prefer the honest observing band (freq_*_actual_hz) when present; fall
+    # back to the spoofed freq_*_hz. The actual-freq fields land once the
+    # odsutils schema PR is merged and deployed at the producer.
+    min_freq_hz = int(item.get("freq_lower_actual_hz") or item["freq_lower_hz"])
+    max_freq_hz = int(item.get("freq_upper_actual_hz") or item["freq_upper_hz"])
+
     return Observation(
         ext_id=ext_id,
         name=f"{src_id} ({site_id})",
         start=start,
         end=end,
-        min_freq_hz=int(item["freq_lower_hz"]),
-        max_freq_hz=int(item["freq_upper_hz"]),
+        min_freq_hz=min_freq_hz,
+        max_freq_hz=max_freq_hz,
         description=f"site={site_id} src={src_id} subarray={subarray}",
         target=target,
     )
