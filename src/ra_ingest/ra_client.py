@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from .pagination import paginate
 from .sources.protocol import Observation
 
 LOG = logging.getLogger(__name__)
@@ -30,17 +31,13 @@ class ZmsRaClient:
             headers={"X-Api-Token": token},
         )
 
-    def list_observations(
-        self,
-        page: int = 1,
-        items_per_page: int = 100,
-    ) -> list[dict[str, Any]]:
-        """List all observations (paginated)."""
-        observations: list[dict[str, Any]] = []
-        while True:
+    def list_observations(self) -> list[dict[str, Any]]:
+        """List all observations across pages."""
+
+        def fetch(page: int) -> tuple[list[dict[str, Any]], int] | None:
             resp = self._client.get(
                 f"{self._base}/v1/raobservations",
-                params={"page": page, "items_per_page": items_per_page},
+                params={"page": page, "items_per_page": 100},
             )
             if resp.status_code != 200:
                 LOG.error(
@@ -49,13 +46,11 @@ class ZmsRaClient:
                     resp.status_code,
                     resp.text[:200],
                 )
-                break
+                return None
             body = resp.json()
-            observations.extend(body.get("ra_observations") or [])
-            if page >= body.get("pages", 1):
-                break
-            page += 1
-        return observations
+            return (body.get("ra_observations") or []), body.get("pages", 1)
+
+        return paginate(fetch)
 
     def create_observation(self, body: dict[str, Any]) -> dict[str, Any] | None:
         resp = self._client.post(f"{self._base}/v1/ods/observations", json=body)
