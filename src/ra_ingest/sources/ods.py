@@ -40,10 +40,12 @@ class OdsSource:
         source_type: str,
         source_name: str,
         url: str,
+        priority: int = 1023,
     ) -> None:
         self._url = url
         self._source_type = source_type
         self._source_name = source_name
+        self._priority = priority
         # Fold source_name into the prefix so multiple ODS facilities stay
         # isolated -- otherwise one facility's reconcile would treat another's
         # claims as vanished and delete them.
@@ -69,6 +71,10 @@ class OdsSource:
     @property
     def writes_observations(self) -> bool:
         return True  # ODS carries sky-pointing metadata -> RAObservation.
+
+    @property
+    def priority(self) -> int:
+        return self._priority
 
     def fetch_observations(self) -> list[Observation]:
         try:

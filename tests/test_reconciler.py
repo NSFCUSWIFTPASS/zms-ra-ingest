@@ -104,13 +104,14 @@ def _make_claim_for(obs, grant_id=None):
     )
 
 
-def _make_source(observations, *, ods=True, prefix=None):
+def _make_source(observations, *, ods=True, prefix=None, priority=None):
     source = MagicMock()
     source.source_type = "ra-ods" if ods else "gcal"
     source.source_name = "hcro" if ods else "ata"
     source.ext_id_prefix = prefix or (ODS_PREFIX if ods else GCAL_PREFIX)
     source.protect_started = ods
     source.writes_observations = ods
+    source.priority = priority if priority is not None else (1023 if ods else 900)
     source.fetch_observations.return_value = observations
     return source
 
@@ -381,6 +382,19 @@ class TestReconcileGrants:
 
         assert stats.deleted == 1
         assert stats.created == 1
+
+    def test_grant_uses_source_priority(self):
+        """Each source's priority lands on the grant it mints, so an ODS
+        observation outranks an overlapping calendar block in ZMC."""
+        obs = _make_obs(f"{ODS_PREFIX}1")
+        zmc = _make_zmc_client(existing_claims=[])
+        _run(zmc, _make_ra_client(), _make_source([obs], priority=1023))
+        assert zmc.create_claim.call_args.kwargs["body"].grant.priority == 1023
+
+        gobs = _make_obs(f"{GCAL_PREFIX}1", with_target=False)
+        gzmc = _make_zmc_client(existing_claims=[])
+        _run(gzmc, _make_ra_client(), _make_source([gobs], ods=False, priority=900))
+        assert gzmc.create_claim.call_args.kwargs["body"].grant.priority == 900
 
     def test_other_source_claims_ignored(self):
         # A claim under a different prefix is not ours -- never touch it.

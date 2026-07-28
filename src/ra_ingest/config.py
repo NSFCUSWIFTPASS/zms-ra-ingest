@@ -39,6 +39,15 @@ class Settings(BaseSettings):
         default=28,
         description="How far ahead of now to pull calendar events (days)",
     )
+    gcal_priority: int = Field(
+        default=900,
+        ge=-1023,
+        le=1023,
+        description=(
+            "Grant priority for calendar events. Lower than ODS so an "
+            "observation preempts an overlapping calendar block"
+        ),
+    )
     gcal_filter_exc: str = Field(
         default="", description="Comma-separated regexps to exclude calendar events"
     )

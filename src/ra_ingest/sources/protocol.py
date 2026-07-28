@@ -60,10 +60,11 @@ class Observation:
 class RASource(Protocol):
     """Interface that each RA data source implements.
 
-    Beyond fetching observations, a source declares three reconcile policies:
+    Beyond fetching observations, a source declares four reconcile policies:
     how its grants are scoped (`ext_id_prefix`), when a live grant is protected
-    from teardown (`protect_started`), and whether it records an RAObservation
-    in zms-ra (`writes_observations`).
+    from teardown (`protect_started`), whether it records an RAObservation in
+    zms-ra (`writes_observations`), and which source wins a spectrum conflict
+    (`priority`).
     """
 
     @property
@@ -98,6 +99,18 @@ class RASource(Protocol):
     def writes_observations(self) -> bool:
         """True if this source also records an RAObservation in zms-ra
         (sources with sky-pointing metadata -- ODS). False mints a grant only."""
+        ...
+
+    @property
+    def priority(self) -> int:
+        """Grant priority (-1023..1023). Decides who wins when two grants
+        overlap in time AND frequency on the same spectrum: the lower-priority
+        grant is held Pending while the higher one is active, then reactivated
+        when it ends. Irrelevant when bands don't overlap.
+
+        ZMC honours this because ra-ingest creates claims; non-claim grants are
+        scheduled at their policy's priority instead.
+        """
         ...
 
     def fetch_observations(self) -> list[Observation]:

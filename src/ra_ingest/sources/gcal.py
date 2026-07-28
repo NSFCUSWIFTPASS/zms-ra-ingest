@@ -58,6 +58,7 @@ class GcalSource:
         calendar_token: str,
         lookahead_days: int = 28,
         ext_id_prefix: str = "gcal-",
+        priority: int = 900,
         filter_exc: list[Pattern] | None = None,
         filter_inc: list[Pattern] | None = None,
     ) -> None:
@@ -67,6 +68,7 @@ class GcalSource:
         self._calendar_token = calendar_token
         self._lookahead_days = lookahead_days
         self._ext_id_prefix = ext_id_prefix
+        self._priority = priority
         self._filter_exc = filter_exc or []
         self._filter_inc = filter_inc or []
 
@@ -89,6 +91,10 @@ class GcalSource:
     @property
     def writes_observations(self) -> bool:
         return False  # No sky-pointing metadata -> grant only, no RAObservation.
+
+    @property
+    def priority(self) -> int:
+        return self._priority
 
     def fetch_observations(self) -> list[Observation]:
         """Fetch future events from gcal and return them as Observations."""

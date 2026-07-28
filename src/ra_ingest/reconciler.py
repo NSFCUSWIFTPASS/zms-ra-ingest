@@ -271,7 +271,7 @@ def _build_claim(
         element_id=element_id,
         spectrum_id=spectrum_id,
         ext_id=obs.ext_id,
-        priority=1023,
+        priority=source.priority,
         starts_at=obs.start,
         expires_at=obs.end,
         constraints=[

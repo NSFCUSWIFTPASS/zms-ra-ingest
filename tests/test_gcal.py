@@ -193,6 +193,11 @@ class TestGcalSource:
         assert src.ext_id_prefix == "gcal-"
         assert src.protect_started is False
         assert src.writes_observations is False
+        # Below the ODS default (1023) so an observation preempts a calendar block.
+        assert src.priority == 900
+
+    def test_priority_is_configurable(self):
+        assert _mksource(priority=500).priority == 500
 
     def test_custom_ext_id_prefix(self):
         src = _mksource(ext_id_prefix="ata-")

@@ -55,6 +55,7 @@ def _build_gcal_source(settings: Settings) -> GcalSource:
         calendar_id=settings.gcal_calendar_id,
         calendar_token=settings.gcal_calendar_token,
         lookahead_days=settings.gcal_lookahead_days,
+        priority=settings.gcal_priority,
         filter_exc=filter_exc,
         filter_inc=filter_inc,
     )

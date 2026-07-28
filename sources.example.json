@@ -3,6 +3,7 @@
         "kind": "ods",
         "type": "ra-ods",
         "source": "hcro",
-        "url": "https://ods.hcro.org/ods.json"
+        "url": "https://ods.hcro.org/ods.json",
+        "priority": 1023
     }
 ]

@@ -105,6 +105,17 @@ class TestOdsSource:
         assert source.ext_id_prefix == "ods-hcro-"
         assert source.protect_started is True
         assert source.writes_observations is True
+        assert source.priority == 1023
+
+    def test_priority_is_configurable(self):
+        source = OdsSource(
+            source_type="ra-ods",
+            source_name="hcro",
+            url="http://example.com",
+            priority=500,
+        )
+
+        assert source.priority == 500
 
     def test_ext_id_prefix_folds_in_source_name(self):
         source = OdsSource(
