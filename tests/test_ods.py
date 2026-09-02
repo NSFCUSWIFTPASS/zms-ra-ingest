@@ -31,7 +31,7 @@ SAMPLE_ODS_ENTRY = {
 
 class TestParseOdsEntry:
     def test_parses_all_fields(self):
-        obs = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
+        [obs] = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
 
         assert obs.min_freq_hz == 1990000000
         assert obs.max_freq_hz == 1995000000
@@ -42,42 +42,55 @@ class TestParseOdsEntry:
         assert obs.end == datetime.datetime(2026, 3, 31, 13, 1, 8, tzinfo=datetime.UTC)
 
     def test_ext_id_is_composite(self):
-        obs = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
+        [obs] = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
 
         assert obs.ext_id == "ods-hcro-ATA:ASP:2026-03-31T12:21:08:0"
 
     def test_ext_id_includes_subarray(self):
         entry = {**SAMPLE_ODS_ENTRY, "subarray": 3}
-        obs = _parse_ods_entry(entry, PREFIX)
+        [obs] = _parse_ods_entry(entry, PREFIX)
 
         assert obs.ext_id.endswith(":3")
 
-    def test_prefers_actual_freq_when_present(self):
+    def test_one_observation_per_actual_band(self):
         entry = {
             **SAMPLE_ODS_ENTRY,
-            "freq_lower_actual_hz": 1420000000,
-            "freq_upper_actual_hz": 1421000000,
+            "freq_actual_hz": [
+                {"freq_lower_hz": 1000000000, "freq_upper_hz": 1672000000},
+                {"freq_lower_hz": 4200000000, "freq_upper_hz": 4872000000},
+            ],
         }
-        obs = _parse_ods_entry(entry, PREFIX)
+        first, second = _parse_ods_entry(entry, PREFIX)
 
-        assert obs.min_freq_hz == 1420000000
-        assert obs.max_freq_hz == 1421000000
+        assert (first.min_freq_hz, first.max_freq_hz) == (1000000000, 1672000000)
+        assert (second.min_freq_hz, second.max_freq_hz) == (4200000000, 4872000000)
+        assert first.ext_id == "ods-hcro-ATA:ASP:2026-03-31T12:21:08:0:b0"
+        assert second.ext_id.endswith(":b1")
+        assert first.name == "ASP (ATA):b0"
+        assert first.start == second.start and first.target == second.target
 
-    def test_falls_back_to_spoofed_freq(self):
-        obs = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
+    def test_empty_actual_bands_fall_back(self):
+        entry = {**SAMPLE_ODS_ENTRY, "freq_actual_hz": []}
+        [obs] = _parse_ods_entry(entry, PREFIX)
+
+        assert obs.min_freq_hz == 1990000000
+
+    def test_falls_back_to_avoidance_band(self):
+        [obs] = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
 
         assert obs.min_freq_hz == 1990000000
         assert obs.max_freq_hz == 1995000000
+        assert obs.ext_id == "ods-hcro-ATA:ASP:2026-03-31T12:21:08:0"
 
     def test_description_includes_metadata(self):
-        obs = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
+        [obs] = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
 
         assert "site=ATA" in obs.description
         assert "src=ASP" in obs.description
         assert "subarray=0" in obs.description
 
     def test_timestamps_are_utc(self):
-        obs = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
+        [obs] = _parse_ods_entry(SAMPLE_ODS_ENTRY, PREFIX)
 
         assert obs.start.tzinfo == datetime.UTC
         assert obs.end.tzinfo == datetime.UTC
@@ -88,7 +101,7 @@ class TestParseOdsEntry:
         del entry["src_id"]
         del entry["subarray"]
 
-        obs = _parse_ods_entry(entry, PREFIX)
+        [obs] = _parse_ods_entry(entry, PREFIX)
 
         assert obs.name == " (ATA)"
         assert obs.ext_id == "ods-hcro-ATA::2026-03-31T12:21:08:0"
@@ -184,6 +197,7 @@ class TestOdsSource:
             "ods_data": [
                 SAMPLE_ODS_ENTRY,
                 {"bad": "entry"},
+                {**SAMPLE_ODS_ENTRY, "freq_actual_hz": [{"wrong_keys": 1}]},
             ]
         }
         mock_resp.raise_for_status.return_value = None
