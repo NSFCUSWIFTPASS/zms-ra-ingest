@@ -29,6 +29,10 @@ class OdsSource:
           "src_end_utc": "2026-03-28T20:33:39",
           "freq_lower_hz": 1990000000,
           "freq_upper_hz": 1995000000,
+          "freq_actual_hz": [
+            {"freq_lower_hz": 1000000000, "freq_upper_hz": 1672000000},
+            ...
+          ],
           ...
         }
       ]
@@ -89,8 +93,7 @@ class OdsSource:
         observations: list[Observation] = []
         for item in ods_data:
             try:
-                obs = _parse_ods_entry(item, self._ext_id_prefix)
-                observations.append(obs)
+                observations.extend(_parse_ods_entry(item, self._ext_id_prefix))
             except Exception:
                 LOG.exception("Failed to parse ODS entry: %r", item)
 
@@ -98,8 +101,13 @@ class OdsSource:
         return observations
 
 
-def _parse_ods_entry(item: dict[str, Any], ext_id_prefix: str) -> Observation:
-    """Parse a single ODS observation entry."""
+def _parse_ods_entry(item: dict[str, Any], ext_id_prefix: str) -> list[Observation]:
+    """Parse one ODS entry into one Observation per observed band.
+
+    Each entry in freq_actual_hz becomes its own Observation, so the gaps
+    between tunings stay unclaimed. Without it, a single Observation on the
+    freq_lower/upper_hz pair.
+    """
     start = datetime.datetime.fromisoformat(item["src_start_utc"]).replace(
         tzinfo=datetime.UTC
     )
@@ -134,19 +142,23 @@ def _parse_ods_entry(item: dict[str, Any], ext_id_prefix: str) -> Observation:
         ),
     )
 
-    # Prefer the honest observing band (freq_*_actual_hz) when present; fall
-    # back to the spoofed freq_*_hz. The actual-freq fields land once the
-    # odsutils schema PR is merged and deployed at the producer.
-    min_freq_hz = int(item.get("freq_lower_actual_hz") or item["freq_lower_hz"])
-    max_freq_hz = int(item.get("freq_upper_actual_hz") or item["freq_upper_hz"])
+    def _observation(min_freq_hz: int, max_freq_hz: int, band_tag: str) -> Observation:
+        return Observation(
+            ext_id=ext_id + band_tag,
+            name=f"{src_id} ({site_id})" + band_tag,
+            start=start,
+            end=end,
+            min_freq_hz=min_freq_hz,
+            max_freq_hz=max_freq_hz,
+            description=f"site={site_id} src={src_id} subarray={subarray}",
+            target=target,
+        )
 
-    return Observation(
-        ext_id=ext_id,
-        name=f"{src_id} ({site_id})",
-        start=start,
-        end=end,
-        min_freq_hz=min_freq_hz,
-        max_freq_hz=max_freq_hz,
-        description=f"site={site_id} src={src_id} subarray={subarray}",
-        target=target,
-    )
+    bands = item.get("freq_actual_hz")
+    if bands:
+        return [
+            _observation(int(b["freq_lower_hz"]), int(b["freq_upper_hz"]), f":b{i}")
+            for i, b in enumerate(bands)
+        ]
+    # Fall back to the avoidance band, untagged so existing claims keep their ext_ids.
+    return [_observation(int(item["freq_lower_hz"]), int(item["freq_upper_hz"]), "")]
