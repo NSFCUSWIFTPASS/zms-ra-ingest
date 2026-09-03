@@ -10,7 +10,7 @@ from zmsclient.zmc.v1.models import (
     SpectrumList,
 )
 
-from ra_ingest.spectrum_picker import SpectrumPicker, _spectrum_bounds
+from ra_ingest.spectrum_picker import SpectrumPicker
 
 STARTS_AT = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
 
@@ -41,34 +41,6 @@ def _make_client(spectrums):
     client = MagicMock()
     client.list_spectrum.return_value = resp
     return client
-
-
-# ---------------------------------------------------------------------------
-# _spectrum_bounds
-# ---------------------------------------------------------------------------
-
-
-class TestSpectrumBounds:
-    def test_single_constraint(self):
-        s = _make_spectrum("s1", "ATA", (1_000_000_000, 2_000_000_000))
-        assert _spectrum_bounds(s) == (1_000_000_000, 2_000_000_000)
-
-    def test_multiple_constraints_spans_union(self):
-        s = _make_spectrum(
-            "s1",
-            "multi",
-            (1_000_000_000, 1_500_000_000),
-            (1_800_000_000, 2_000_000_000),
-        )
-        # Current implementation uses union min/max -- matches if event fits the envelope
-        assert _spectrum_bounds(s) == (1_000_000_000, 2_000_000_000)
-
-    def test_no_constraints_returns_none(self):
-        s = Spectrum(
-            element_id="e", name="n", url="http://x", enabled=True, starts_at=STARTS_AT
-        )
-        s.constraints = []
-        assert _spectrum_bounds(s) is None
 
 
 # ---------------------------------------------------------------------------
@@ -131,3 +103,27 @@ class TestPick:
         result = picker.pick(1_000_000_000, 2_000_000_000)
         assert result is not None
         assert result.id == "ata"
+
+    def test_gap_between_constraints_not_covered(self):
+        """A spectrum with two disjoint constraints does NOT cover the gap.
+
+        Constraints 1000-1200 and 1500-1700; an observation at 1300-1400 sits
+        in the gap. The old envelope (1000-1700) wrongly matched it; matching
+        per-constraint correctly returns None.
+        """
+        gappy = _make_spectrum(
+            "gappy",
+            "two-band",
+            (1_000_000_000, 1_200_000_000),
+            (1_500_000_000, 1_700_000_000),
+        )
+        client = _make_client([gappy])
+        picker = SpectrumPicker(client, "elem-1")
+        picker.refresh()
+
+        # In the gap between the two constraints -> no cover.
+        assert picker.pick(1_300_000_000, 1_400_000_000) is None
+        # Inside the lower constraint -> matches.
+        assert picker.pick(1_050_000_000, 1_150_000_000) is gappy
+        # Inside the upper constraint -> matches.
+        assert picker.pick(1_550_000_000, 1_650_000_000) is gappy

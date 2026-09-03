@@ -13,7 +13,6 @@ import time
 from zmsclient.zmc.client import ZmsZmcClient
 
 from .config import Settings
-from .gcal_reconciler import reconcile_gcal
 from .ra_client import ZmsRaClient
 from .reconciler import reconcile
 from .report import generate_report, send_report
@@ -55,9 +54,8 @@ def _build_gcal_source(settings: Settings) -> GcalSource:
         source_name="gcal",
         calendar_id=settings.gcal_calendar_id,
         calendar_token=settings.gcal_calendar_token,
-        default_min_freq_hz=int(settings.gcal_default_min_freq * 1_000_000),
-        default_max_freq_hz=int(settings.gcal_default_max_freq * 1_000_000),
         lookahead_days=settings.gcal_lookahead_days,
+        priority=settings.gcal_priority,
         filter_exc=filter_exc,
         filter_inc=filter_inc,
     )
@@ -112,13 +110,13 @@ def main():
         send_report(settings, body)
         return
 
-    ods_sources = _load_sources(settings)
-    gcal_source = _build_gcal_source(settings)
+    # gcal and ODS are peers now: each source mints its own grants through the
+    # one reconcile loop. No ordering dependency between them.
+    sources = [_build_gcal_source(settings), *_load_sources(settings)]
 
     LOG.info(
-        "Starting zms-ra-ingest: %d ODS source(s), gcal lookahead %dd, "
-        "polling every %ds",
-        len(ods_sources),
+        "Starting zms-ra-ingest: %d source(s), gcal lookahead %dd, polling every %ds",
+        len(sources),
         settings.gcal_lookahead_days,
         settings.poll_interval_seconds,
     )
@@ -135,29 +133,9 @@ def main():
     signal.signal(signal.SIGTERM, _handle_signal)
 
     while not _shutdown:
-        # gcal first: ODS observations reference gcal grants, so gcal
-        # should be in sync before ODS runs.
-        LOG.info("Reconciling gcal source")
-        try:
-            gstats = reconcile_gcal(
-                client=zmc_client,
-                source=gcal_source,
-                element_id=settings.element_id,
-                picker=spectrum_picker,
-            )
+        for source in sources:
             LOG.info(
-                "Gcal reconcile done: created=%d deleted=%d unchanged=%d errors=%d",
-                gstats.created,
-                gstats.deleted,
-                gstats.unchanged,
-                gstats.errors,
-            )
-        except Exception:
-            LOG.exception("Error reconciling gcal source")
-
-        for source in ods_sources:
-            LOG.info(
-                "Reconciling ODS source: type=%s source=%s",
+                "Reconciling source: type=%s source=%s",
                 source.source_type,
                 source.source_name,
             )
@@ -167,15 +145,18 @@ def main():
                     ra_client=ra_client,
                     source=source,
                     element_id=settings.element_id,
+                    picker=spectrum_picker,
                 )
                 LOG.info(
-                    "ODS reconcile done: created=%d deleted=%d unchanged=%d "
-                    "unmatched=%d errors=%d",
+                    "Reconcile done (%s): created=%d deleted=%d unchanged=%d "
+                    "errors=%d ra_created=%d ra_deleted=%d",
+                    source.source_type,
                     stats.created,
                     stats.deleted,
                     stats.unchanged,
-                    stats.unmatched,
                     stats.errors,
+                    stats.ra_created,
+                    stats.ra_deleted,
                 )
             except Exception:
                 LOG.exception("Error reconciling source type=%s", source.source_type)

@@ -29,6 +29,10 @@ class OdsSource:
           "src_end_utc": "2026-03-28T20:33:39",
           "freq_lower_hz": 1990000000,
           "freq_upper_hz": 1995000000,
+          "freq_actual_hz": [
+            {"freq_lower_hz": 1000000000, "freq_upper_hz": 1672000000},
+            ...
+          ],
           ...
         }
       ]
@@ -40,10 +44,16 @@ class OdsSource:
         source_type: str,
         source_name: str,
         url: str,
+        priority: int = 1023,
     ) -> None:
         self._url = url
         self._source_type = source_type
         self._source_name = source_name
+        self._priority = priority
+        # Fold source_name into the prefix so multiple ODS facilities stay
+        # isolated -- otherwise one facility's reconcile would treat another's
+        # claims as vanished and delete them.
+        self._ext_id_prefix = f"ods-{source_name}-"
         self._client = httpx.Client(timeout=30.0)
 
     @property
@@ -53,6 +63,22 @@ class OdsSource:
     @property
     def source_name(self) -> str:
         return self._source_name
+
+    @property
+    def ext_id_prefix(self) -> str:
+        return self._ext_id_prefix
+
+    @property
+    def protect_started(self) -> bool:
+        return True  # ODS feed flaps; a live observation must not be torn down.
+
+    @property
+    def writes_observations(self) -> bool:
+        return True  # ODS carries sky-pointing metadata -> RAObservation.
+
+    @property
+    def priority(self) -> int:
+        return self._priority
 
     def fetch_observations(self) -> list[Observation]:
         try:
@@ -67,8 +93,7 @@ class OdsSource:
         observations: list[Observation] = []
         for item in ods_data:
             try:
-                obs = _parse_ods_entry(item)
-                observations.append(obs)
+                observations.extend(_parse_ods_entry(item, self._ext_id_prefix))
             except Exception:
                 LOG.exception("Failed to parse ODS entry: %r", item)
 
@@ -76,8 +101,13 @@ class OdsSource:
         return observations
 
 
-def _parse_ods_entry(item: dict[str, Any]) -> Observation:
-    """Parse a single ODS observation entry."""
+def _parse_ods_entry(item: dict[str, Any], ext_id_prefix: str) -> list[Observation]:
+    """Parse one ODS entry into one Observation per observed band.
+
+    Each entry in freq_actual_hz becomes its own Observation, so the gaps
+    between tunings stay unclaimed. Without it, a single Observation on the
+    freq_lower/upper_hz pair.
+    """
     start = datetime.datetime.fromisoformat(item["src_start_utc"]).replace(
         tzinfo=datetime.UTC
     )
@@ -89,9 +119,8 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
     src_id = item.get("src_id", "")
     subarray = int(item.get("subarray", 0))
 
-    # Build a stable ext_id from the fields that uniquely identify this observation.
-    # ODS doesn't have an explicit ID, so we compose one.
-    ext_id = f"{site_id}:{src_id}:{item['src_start_utc']}:{subarray}"
+    # ODS has no record id; compose a stable one from the identifying fields.
+    ext_id = f"{ext_id_prefix}{site_id}:{src_id}:{item['src_start_utc']}:{subarray}"
 
     target = ObsTarget(
         site_id=site_id,
@@ -113,13 +142,23 @@ def _parse_ods_entry(item: dict[str, Any]) -> Observation:
         ),
     )
 
-    return Observation(
-        ext_id=ext_id,
-        name=f"{src_id} ({site_id})",
-        start=start,
-        end=end,
-        min_freq_hz=int(item["freq_lower_hz"]),
-        max_freq_hz=int(item["freq_upper_hz"]),
-        description=f"site={site_id} src={src_id} subarray={subarray}",
-        target=target,
-    )
+    def _observation(min_freq_hz: int, max_freq_hz: int, band_tag: str) -> Observation:
+        return Observation(
+            ext_id=ext_id + band_tag,
+            name=f"{src_id} ({site_id})" + band_tag,
+            start=start,
+            end=end,
+            min_freq_hz=min_freq_hz,
+            max_freq_hz=max_freq_hz,
+            description=f"site={site_id} src={src_id} subarray={subarray}",
+            target=target,
+        )
+
+    bands = item.get("freq_actual_hz")
+    if bands:
+        return [
+            _observation(int(b["freq_lower_hz"]), int(b["freq_upper_hz"]), f":b{i}")
+            for i, b in enumerate(bands)
+        ]
+    # Fall back to the avoidance band, untagged so existing claims keep their ext_ids.
+    return [_observation(int(item["freq_lower_hz"]), int(item["freq_upper_hz"]), "")]

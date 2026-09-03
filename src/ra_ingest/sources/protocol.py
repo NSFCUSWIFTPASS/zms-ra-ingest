@@ -58,7 +58,14 @@ class Observation:
 
 
 class RASource(Protocol):
-    """Interface that each RA data source implements."""
+    """Interface that each RA data source implements.
+
+    Beyond fetching observations, a source declares four reconcile policies:
+    how its grants are scoped (`ext_id_prefix`), when a live grant is protected
+    from teardown (`protect_started`), whether it records an RAObservation in
+    zms-ra (`writes_observations`), and which source wins a spectrum conflict
+    (`priority`).
+    """
 
     @property
     def source_type(self) -> str:
@@ -68,6 +75,42 @@ class RASource(Protocol):
     @property
     def source_name(self) -> str:
         """The facility identifier, e.g. 'hcro'."""
+        ...
+
+    @property
+    def ext_id_prefix(self) -> str:
+        """Prefix scoping this source's claims/RAObservation rows, e.g. 'gcal-'.
+
+        Must be unique per source: the reconciler treats any claim under this
+        prefix that the source no longer lists as vanished, so two sources
+        sharing a prefix would delete each other's records.
+        """
+        ...
+
+    @property
+    def protect_started(self) -> bool:
+        """Teardown guard. True: a claim is protected once it has STARTED
+        (the source flaps; absence is not a cancel -- ODS). False: protected
+        only once it has ENDED (the source is authoritative; active edits take
+        effect -- gcal)."""
+        ...
+
+    @property
+    def writes_observations(self) -> bool:
+        """True if this source also records an RAObservation in zms-ra
+        (sources with sky-pointing metadata -- ODS). False mints a grant only."""
+        ...
+
+    @property
+    def priority(self) -> int:
+        """Grant priority (-1023..1023). Decides who wins when two grants
+        overlap in time AND frequency on the same spectrum: the lower-priority
+        grant is held Pending while the higher one is active, then reactivated
+        when it ends. Irrelevant when bands don't overlap.
+
+        ZMC honours this because ra-ingest creates claims; non-claim grants are
+        scheduled at their policy's priority instead.
+        """
         ...
 
     def fetch_observations(self) -> list[Observation]:

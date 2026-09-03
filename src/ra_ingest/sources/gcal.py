@@ -15,7 +15,8 @@ frequency info in a labeled multi-line format:
     Bandwidth: 26 MHz
 
 When present, we extract Center Frequency + Bandwidth and derive a
-min/max range. Otherwise we fall back to configured defaults.
+min/max range. Events with no parseable frequency are skipped -- a grant
+must protect a real band, so we do not invent one from defaults.
 """
 
 from __future__ import annotations
@@ -55,10 +56,9 @@ class GcalSource:
         source_name: str,
         calendar_id: str,
         calendar_token: str,
-        default_min_freq_hz: int,
-        default_max_freq_hz: int,
         lookahead_days: int = 28,
         ext_id_prefix: str = "gcal-",
+        priority: int = 900,
         filter_exc: list[Pattern] | None = None,
         filter_inc: list[Pattern] | None = None,
     ) -> None:
@@ -66,10 +66,9 @@ class GcalSource:
         self._source_name = source_name
         self._calendar_id = calendar_id
         self._calendar_token = calendar_token
-        self._default_min_freq_hz = default_min_freq_hz
-        self._default_max_freq_hz = default_max_freq_hz
         self._lookahead_days = lookahead_days
         self._ext_id_prefix = ext_id_prefix
+        self._priority = priority
         self._filter_exc = filter_exc or []
         self._filter_inc = filter_inc or []
 
@@ -84,6 +83,18 @@ class GcalSource:
     @property
     def ext_id_prefix(self) -> str:
         return self._ext_id_prefix
+
+    @property
+    def protect_started(self) -> bool:
+        return False  # Calendar edits are authoritative; guard on grant end.
+
+    @property
+    def writes_observations(self) -> bool:
+        return False  # No sky-pointing metadata -> grant only, no RAObservation.
+
+    @property
+    def priority(self) -> int:
+        return self._priority
 
     def fetch_observations(self) -> list[Observation]:
         """Fetch future events from gcal and return them as Observations."""
@@ -111,12 +122,7 @@ class GcalSource:
         observations: list[Observation] = []
         for event in events:
             try:
-                obs = _event_to_observation(
-                    event,
-                    self._ext_id_prefix,
-                    self._default_min_freq_hz,
-                    self._default_max_freq_hz,
-                )
+                obs = _event_to_observation(event, self._ext_id_prefix)
                 if obs is not None:
                     observations.append(obs)
             except Exception:
@@ -129,10 +135,8 @@ class GcalSource:
 def _event_to_observation(
     event: dict,
     ext_id_prefix: str,
-    default_min_freq_hz: int,
-    default_max_freq_hz: int,
 ) -> Observation | None:
-    """Convert a gcal event dict into an Observation."""
+    """Convert a gcal event dict into an Observation, or None to skip it."""
     event_id = event.get("id")
     if not event_id:
         return None
@@ -157,9 +161,13 @@ def _event_to_observation(
     if m:
         name = m.group(1).strip()
 
-    # Frequency: title (summary) first, then the description, then defaults.
+    # Frequency: title (summary) first, then the description. No default -- an
+    # event with no parseable band cannot mint a meaningful grant, so skip it.
     freq = _parse_freq(summary) or _parse_freq(description)
-    min_freq_hz, max_freq_hz = freq or (default_min_freq_hz, default_max_freq_hz)
+    if freq is None:
+        LOG.info("Skipping gcal event %s: no parseable frequency", event_id)
+        return None
+    min_freq_hz, max_freq_hz = freq
 
     return Observation(
         ext_id=f"{ext_id_prefix}{event_id}",

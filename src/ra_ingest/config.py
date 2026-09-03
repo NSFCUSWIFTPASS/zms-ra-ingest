@@ -39,16 +39,13 @@ class Settings(BaseSettings):
         default=28,
         description="How far ahead of now to pull calendar events (days)",
     )
-    gcal_default_min_freq: float = Field(
-        default=1000,
+    gcal_priority: int = Field(
+        default=900,
+        ge=-1023,
+        le=1023,
         description=(
-            "Fallback min frequency (MHz) when an event has no parseable freq info"
-        ),
-    )
-    gcal_default_max_freq: float = Field(
-        default=2000,
-        description=(
-            "Fallback max frequency (MHz) when an event has no parseable freq info"
+            "Grant priority for calendar events. Lower than ODS so an "
+            "observation preempts an overlapping calendar block"
         ),
     )
     gcal_filter_exc: str = Field(

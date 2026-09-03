@@ -72,15 +72,14 @@ def _mkevent(**kwargs):
     return base
 
 
+_DESC_FREQ = "Center Frequency: 915 (MHz)\nBandwidth: 26 MHz"
+
+
 class TestEventToObservation:
-    def test_simple_event(self):
+    def test_event_without_freq_is_skipped(self):
+        # No parseable band -> cannot mint a meaningful grant -> skip it.
         event = _mkevent()
-        obs = _event_to_observation(event, "gcal-", 100, 200)
-        assert obs is not None
-        assert obs.ext_id == "gcal-evt-1"
-        assert obs.name == "[ASP] Year 2 Session 225"
-        assert obs.min_freq_hz == 100
-        assert obs.max_freq_hz == 200
+        assert _event_to_observation(event, "gcal-") is None
 
     def test_hcro_transmission_event(self):
         event = _mkevent(
@@ -91,7 +90,7 @@ class TestEventToObservation:
                 "Bandwidth: 26 MHz"
             ),
         )
-        obs = _event_to_observation(event, "gcal-", 1000, 2000)
+        obs = _event_to_observation(event, "gcal-")
         assert obs is not None
         assert obs.ext_id == "gcal-hcro-1"
         # Name should come from Activity Title
@@ -111,7 +110,7 @@ class TestEventToObservation:
                 "Center Frequency: 915 (MHz) Bandwidth: 26 MHz"
             ),
         )
-        obs = _event_to_observation(event, "gcal-", 1000, 2000)
+        obs = _event_to_observation(event, "gcal-")
         assert obs is not None
         assert obs.name == "HCRO Transmission"
         assert obs.min_freq_hz == 902_000_000
@@ -119,9 +118,12 @@ class TestEventToObservation:
 
     def test_activity_title_with_no_trailing_fields(self):
         # A clean "Activity Title: X" with no following labels still resolves
-        # to X (the end-of-string branch of the title regex).
-        event = _mkevent(id="clean", summary="Activity Title: Just A Title")
-        obs = _event_to_observation(event, "gcal-", 0, 0)
+        # to X (the end-of-string branch of the title regex). Freq comes from
+        # the description so the event survives.
+        event = _mkevent(
+            id="clean", summary="Activity Title: Just A Title", description=_DESC_FREQ
+        )
+        obs = _event_to_observation(event, "gcal-")
         assert obs is not None
         assert obs.name == "Just A Title"
 
@@ -130,9 +132,9 @@ class TestEventToObservation:
         event = _mkevent(
             id="desc-freq",
             summary="[ASP] Year 2 Session 300",
-            description="Center Frequency: 915 (MHz)\nBandwidth: 26 MHz",
+            description=_DESC_FREQ,
         )
-        obs = _event_to_observation(event, "gcal-", 1000, 2000)
+        obs = _event_to_observation(event, "gcal-")
         assert obs is not None
         assert obs.name == "[ASP] Year 2 Session 300"  # name from native title
         assert obs.min_freq_hz == 902_000_000  # freq from description
@@ -144,25 +146,25 @@ class TestEventToObservation:
             summary="Center Frequency: 915 (MHz)\nBandwidth: 26 MHz",
             description="Center Frequency: 1420 (MHz)\nBandwidth: 10 MHz",
         )
-        obs = _event_to_observation(event, "gcal-", 0, 0)
+        obs = _event_to_observation(event, "gcal-")
         assert obs is not None
         assert obs.min_freq_hz == 902_000_000  # title wins, not description
 
     def test_no_id_returns_none(self):
         event = _mkevent(id=None)
-        assert _event_to_observation(event, "gcal-", 0, 0) is None
+        assert _event_to_observation(event, "gcal-") is None
 
     def test_no_times_returns_none(self):
         event = _mkevent(startDateTime=None, endDateTime=None)
-        assert _event_to_observation(event, "gcal-", 0, 0) is None
+        assert _event_to_observation(event, "gcal-") is None
 
     def test_ext_id_uses_prefix(self):
-        event = _mkevent(id="abc")
-        obs = _event_to_observation(event, "gcal-", 0, 0)
+        event = _mkevent(id="abc", description=_DESC_FREQ)
+        obs = _event_to_observation(event, "gcal-")
         assert obs is not None
         assert obs.ext_id == "gcal-abc"
 
-        obs2 = _event_to_observation(event, "myprefix-", 0, 0)
+        obs2 = _event_to_observation(event, "myprefix-")
         assert obs2 is not None
         assert obs2.ext_id == "myprefix-abc"
 
@@ -172,43 +174,39 @@ class TestEventToObservation:
 # ---------------------------------------------------------------------------
 
 
+def _mksource(**kwargs):
+    base = {
+        "source_type": "gcal",
+        "source_name": "ata",
+        "calendar_id": "cal-id",
+        "calendar_token": "tok",
+    }
+    base.update(kwargs)
+    return GcalSource(**base)
+
+
 class TestGcalSource:
     def test_properties(self):
-        src = GcalSource(
-            source_type="gcal",
-            source_name="ata",
-            calendar_id="cal-id",
-            calendar_token="tok",
-            default_min_freq_hz=100,
-            default_max_freq_hz=200,
-        )
+        src = _mksource()
         assert src.source_type == "gcal"
         assert src.source_name == "ata"
         assert src.ext_id_prefix == "gcal-"
+        assert src.protect_started is False
+        assert src.writes_observations is False
+        # Below the ODS default (1023) so an observation preempts a calendar block.
+        assert src.priority == 900
+
+    def test_priority_is_configurable(self):
+        assert _mksource(priority=500).priority == 500
 
     def test_custom_ext_id_prefix(self):
-        src = GcalSource(
-            source_type="gcal",
-            source_name="ata",
-            calendar_id="cal-id",
-            calendar_token="tok",
-            default_min_freq_hz=0,
-            default_max_freq_hz=0,
-            ext_id_prefix="ata-",
-        )
+        src = _mksource(ext_id_prefix="ata-")
         assert src.ext_id_prefix == "ata-"
 
-    def test_fetch_converts_events(self):
-        src = GcalSource(
-            source_type="gcal",
-            source_name="ata",
-            calendar_id="cal-id",
-            calendar_token="tok",
-            default_min_freq_hz=1_000_000_000,
-            default_max_freq_hz=2_000_000_000,
-        )
+    def test_fetch_converts_events_and_skips_freqless(self):
+        src = _mksource()
         fake_events = [
-            _mkevent(id="a", summary="regular"),
+            _mkevent(id="a", summary="regular"),  # no freq -> skipped
             _mkevent(
                 id="b",
                 summary=(
@@ -220,23 +218,14 @@ class TestGcalSource:
         with patch("ra_ingest.sources.gcal.get_events", return_value=fake_events):
             obs_list = src.fetch_observations()
 
-        assert len(obs_list) == 2
-        assert obs_list[0].ext_id == "gcal-a"
-        assert obs_list[0].min_freq_hz == 1_000_000_000  # default
-        assert obs_list[1].ext_id == "gcal-b"
-        assert obs_list[1].min_freq_hz == 902_000_000  # parsed
+        assert len(obs_list) == 1
+        assert obs_list[0].ext_id == "gcal-b"
+        assert obs_list[0].min_freq_hz == 902_000_000  # parsed
 
     def test_fetch_raises_on_network_error(self):
         from ra_ingest.sources.protocol import SourceFetchError
 
-        src = GcalSource(
-            source_type="gcal",
-            source_name="ata",
-            calendar_id="cal-id",
-            calendar_token="tok",
-            default_min_freq_hz=0,
-            default_max_freq_hz=0,
-        )
+        src = _mksource()
         with patch(
             "ra_ingest.sources.gcal.get_events", side_effect=RuntimeError("boom")
         ):
@@ -247,14 +236,7 @@ class TestGcalSource:
         """David's get_events sys.exit()s on non-200; we convert to SourceFetchError."""
         from ra_ingest.sources.protocol import SourceFetchError
 
-        src = GcalSource(
-            source_type="gcal",
-            source_name="ata",
-            calendar_id="cal-id",
-            calendar_token="tok",
-            default_min_freq_hz=0,
-            default_max_freq_hz=0,
-        )
+        src = _mksource()
         with patch("ra_ingest.sources.gcal.get_events", side_effect=SystemExit("403")):
             with pytest.raises(SourceFetchError):
                 src.fetch_observations()
