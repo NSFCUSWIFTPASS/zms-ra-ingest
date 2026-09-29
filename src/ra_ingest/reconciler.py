@@ -5,6 +5,8 @@ Each cycle, for a single source:
   2. Fetch current ZMC claims scoped by the source's ext_id_prefix.
   3. Create new claims, delete vanished ones, recreate drifted ones -- each
      guarded so a live grant is never torn down (see `source.protect_started`).
+     A drifted claim that is protected but still live has its grant replaced
+     instead, so protection continues without a gap.
 
 A source that also carries sky-pointing metadata (`source.writes_observations`)
 gets an RAObservation in zms-ra alongside each grant, referencing the grant
@@ -13,7 +15,8 @@ created with it, deleted with it, recreated on drift, and re-POSTed if found
 missing (a heal after a partial failure).
 
 Structure: the first pass classifies each observation into `to_delete` /
-`to_create` (or counts it unchanged); two execution passes then do the I/O.
+`to_replace` / `to_create` (or counts it unchanged); execution passes then do
+the I/O.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from zmsclient.zmc.v1.models import (
     Grant,
     GrantConstraint,
     GrantOpStatus,
+    Spectrum,
 )
 
 from .pagination import paginate
@@ -46,6 +50,7 @@ LOG = logging.getLogger(__name__)
 class ReconcileStats:
     created: int = 0
     deleted: int = 0
+    replaced: int = 0
     unchanged: int = 0
     errors: int = 0
     ra_created: int = 0
@@ -88,6 +93,7 @@ def reconcile(
 
     # Classify: sort each observation into to_delete / to_create (no I/O here).
     to_delete: list[tuple[str, Claim]] = []
+    to_replace: list[tuple[Claim, Observation]] = []
     to_create: list[Observation] = []
 
     # Vanished: delete unless the grant is protected.
@@ -102,17 +108,20 @@ def reconcile(
             LOG.exception("Error on vanished claim %s", ext_id)
             stats.errors += 1
 
-    # Existing: matched (maybe heal a missing raobs), or drifted (recreate).
+    # Existing: matched (maybe heal a missing raobs), drifted (recreate), or
+    # drifted but protected (replace the grant while it is still live).
     for ext_id in desired.keys() & current.keys():
         obs, claim = desired[ext_id], current[ext_id]
         try:
             if not _claim_matches(claim, obs):
-                if _protected(claim, source, now):
-                    LOG.warning("Observation %s changed but grant is protected", ext_id)
-                    stats.unchanged += 1
-                else:
+                if not _protected(claim, source, now):
                     to_delete.append((ext_id, claim))
                     to_create.append(obs)
+                elif not _claim_ended(claim, now) and obs.end > now:
+                    to_replace.append((claim, obs))
+                else:
+                    LOG.warning("Observation %s changed but grant is protected", ext_id)
+                    stats.unchanged += 1
             else:
                 stats.unchanged += 1
                 if source.writes_observations and ext_id not in current_raobs:
@@ -144,6 +153,31 @@ def reconcile(
                 stats.errors += 1
         except Exception:
             LOG.exception("Error deleting claim %s", ext_id)
+            stats.errors += 1
+
+    # Replace keeps the claim and swaps its grant, so the raobs must be
+    # re-posted to reference the new grant.
+    for claim, obs in to_replace:
+        try:
+            grant_id = _replace_grant(
+                zmc_client, claim, obs, element_id, picker, source
+            )
+            if grant_id is None:
+                stats.errors += 1
+                continue
+            stats.replaced += 1
+            if source.writes_observations:
+                if obs.ext_id in current_raobs:
+                    if ra_client.delete_observation(obs.ext_id):
+                        stats.ra_deleted += 1
+                    else:
+                        stats.errors += 1
+                if _post_raobs(ra_client, obs, grant_id):
+                    stats.ra_created += 1
+                else:
+                    stats.errors += 1
+        except Exception:
+            LOG.exception("Error replacing grant for %s", obs.ext_id)
             stats.errors += 1
 
     for obs in to_create:
@@ -273,14 +307,8 @@ def _create_claim(
 ) -> str | None:
     """Pick a spectrum and create the Claim+Grant. Returns the new grant id, or
     None if no spectrum covers the band or the create failed."""
-    spectrum = picker.pick(obs.min_freq_hz, obs.max_freq_hz)
+    spectrum = _pick_spectrum(picker, obs)
     if spectrum is None:
-        LOG.error(
-            "No spectrum covers %s (%d-%d Hz); skipping",
-            obs.ext_id,
-            obs.min_freq_hz,
-            obs.max_freq_hz,
-        )
         return None
     body = _build_claim(obs, element_id, str(spectrum.id), source)
     resp = zmc_client.create_claim(body=body, x_api_elaborate="true")
@@ -289,6 +317,44 @@ def _create_claim(
         return None
     LOG.info("Created claim for %s on spectrum %s", obs.ext_id, spectrum.name)
     return str(cast(Claim, resp.parsed).grant.id)
+
+
+def _replace_grant(
+    zmc_client: ZmsZmcClient,
+    claim: Claim,
+    obs: Observation,
+    element_id: str,
+    picker: SpectrumPicker,
+    source: RASource,
+) -> str | None:
+    """Replace a claim's grant with one matching obs. The claim is kept and
+    points at the new grant. Returns the new grant id, or None if no spectrum
+    covers the band or the replace failed."""
+    spectrum = _pick_spectrum(picker, obs)
+    if spectrum is None:
+        return None
+    body = _build_grant(obs, element_id, str(spectrum.id), source)
+    resp = zmc_client.replace_grant(
+        grant_id=_grant_id(claim), body=body, x_api_elaborate="true"
+    )
+    if not resp.is_success:
+        LOG.error("Failed to replace grant for %s: %s", obs.ext_id, resp.status_code)
+        return None
+    LOG.info("Replaced grant for %s (now ends %s)", obs.ext_id, obs.end)
+    return str(cast(Grant, resp.parsed).id)
+
+
+def _pick_spectrum(picker: SpectrumPicker, obs: Observation) -> Spectrum | None:
+    """The spectrum covering obs's band, or None (logged) if there isn't one."""
+    spectrum = picker.pick(obs.min_freq_hz, obs.max_freq_hz)
+    if spectrum is None:
+        LOG.error(
+            "No spectrum covers %s (%d-%d Hz); skipping",
+            obs.ext_id,
+            obs.min_freq_hz,
+            obs.max_freq_hz,
+        )
+    return spectrum
 
 
 def _delete_claim(zmc_client: ZmsZmcClient, claim: Claim) -> bool:
@@ -309,13 +375,13 @@ def _post_raobs(ra_client: ZmsRaClient, obs: Observation, grant_id: str) -> bool
     return False
 
 
-def _build_claim(
+def _build_grant(
     obs: Observation,
     element_id: str,
     spectrum_id: str,
     source: RASource,
-) -> Claim:
-    grant = Grant(
+) -> Grant:
+    return Grant(
         name=obs.name,
         description=obs.description,
         element_id=element_id,
@@ -336,6 +402,14 @@ def _build_claim(
         ],
         op_status=GrantOpStatus.SUBMITTED,
     )
+
+
+def _build_claim(
+    obs: Observation,
+    element_id: str,
+    spectrum_id: str,
+    source: RASource,
+) -> Claim:
     return Claim(
         name=obs.name,
         description=obs.description,
@@ -343,7 +417,7 @@ def _build_claim(
         source=source.source_name,
         element_id=element_id,
         ext_id=obs.ext_id,
-        grant=grant,
+        grant=_build_grant(obs, element_id, spectrum_id, source),
     )
 
 
