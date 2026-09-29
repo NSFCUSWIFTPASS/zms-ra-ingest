@@ -129,11 +129,16 @@ def _make_zmc_client(existing_claims=None, created_grant_id="new-grant-id"):
     )
     create_resp = MagicMock(is_success=True, parsed=created, status_code=201)
     delete_resp = MagicMock(is_success=True, status_code=200)
+    replacement = _make_grant(
+        "replacement-grant-id", NOW, NOW + datetime.timedelta(hours=1)
+    )
+    replace_resp = MagicMock(is_success=True, parsed=replacement, status_code=201)
 
     client = MagicMock()
     client.list_claims.return_value = list_resp
     client.create_claim.return_value = create_resp
     client.delete_claim.return_value = delete_resp
+    client.replace_grant.return_value = replace_resp
     return client
 
 
@@ -346,7 +351,9 @@ class TestReconcileGrants:
         assert stats.ra_deleted == 1
         assert stats.ra_created == 1
 
-    def test_drift_started_kept_ods(self):
+    def test_drift_started_replaced_ods(self):
+        # A live grant can't be deleted, but its grant is replaced so the
+        # new end takes effect without a gap. The claim is kept.
         old = _make_claim(
             f"{ODS_PREFIX}live",
             NOW - datetime.timedelta(hours=1),
@@ -360,9 +367,31 @@ class TestReconcileGrants:
 
         stats = _run(zmc, ra, _make_source([new_obs]))
 
+        assert stats.replaced == 1
         assert stats.deleted == 0
         assert stats.created == 0
+        zmc.delete_claim.assert_not_called()
+        zmc.create_claim.assert_not_called()
+        kwargs = zmc.replace_grant.call_args.kwargs
+        assert kwargs["grant_id"] == f"grant-{ODS_PREFIX}live"
+        assert kwargs["body"].expires_at == new_obs.end
+
+    def test_drift_ended_kept_ods(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}done",
+            NOW - datetime.timedelta(hours=2),
+            NOW - datetime.timedelta(hours=1),
+        )
+        new_obs = _make_obs(
+            f"{ODS_PREFIX}done", start_offset_hours=-2, end_offset_hours=-0.5
+        )
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client(existing_raobs=[_make_raobs(f"{ODS_PREFIX}done")])
+
+        stats = _run(zmc, ra, _make_source([new_obs]))
+
         assert stats.unchanged == 1
+        zmc.replace_grant.assert_not_called()
 
     def test_drift_active_recreated_gcal(self):
         old = _make_claim(
@@ -442,8 +471,13 @@ class TestRepushCorrelation:
 
         assert stats.created == 0
         assert stats.deleted == 0
+        assert stats.replaced == 1
         zmc.create_claim.assert_not_called()
         zmc.delete_claim.assert_not_called()
+        grant = zmc.replace_grant.call_args.kwargs["body"]
+        assert grant.ext_id == f"{ODS_PREFIX}first"
+        assert grant.starts_at == old.grant.starts_at
+        assert grant.expires_at == repush.end
 
     def test_future_repush_keeps_ext_id_and_start(self):
         old = _make_claim(
@@ -591,6 +625,47 @@ class TestRaobs:
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
+
+
+class TestReplaceRaobs:
+    def test_raobs_reposted_with_replacement_grant(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}live",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        new_obs = _make_obs(
+            f"{ODS_PREFIX}live", start_offset_hours=-1, end_offset_hours=2
+        )
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client(existing_raobs=[_make_raobs(f"{ODS_PREFIX}live")])
+
+        stats = _run(zmc, ra, _make_source([new_obs]))
+
+        ra.delete_observation.assert_called_once_with(f"{ODS_PREFIX}live")
+        body = ra.create_observation.call_args.args[0]
+        assert body["GrantId"] == "replacement-grant-id"
+        assert stats.ra_deleted == 1
+        assert stats.ra_created == 1
+
+    def test_replace_error_counts(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}live",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        new_obs = _make_obs(
+            f"{ODS_PREFIX}live", start_offset_hours=-1, end_offset_hours=2
+        )
+        zmc = _make_zmc_client(existing_claims=[old])
+        zmc.replace_grant.return_value = MagicMock(is_success=False, status_code=400)
+        ra = _make_ra_client(existing_raobs=[_make_raobs(f"{ODS_PREFIX}live")])
+
+        stats = _run(zmc, ra, _make_source([new_obs]))
+
+        assert stats.errors == 1
+        assert stats.replaced == 0
+        ra.delete_observation.assert_not_called()
 
 
 class TestErrors:
