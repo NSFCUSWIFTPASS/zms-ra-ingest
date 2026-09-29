@@ -111,6 +111,7 @@ def _make_source(observations, *, ods=True, prefix=None, priority=None):
     source.ext_id_prefix = prefix or (ODS_PREFIX if ods else GCAL_PREFIX)
     source.protect_started = ods
     source.writes_observations = ods
+    source.correlate_repushes = ods
     source.priority = priority if priority is not None else (1023 if ods else 900)
     source.fetch_observations.return_value = observations
     return source
@@ -415,6 +416,134 @@ class TestReconcileGrants:
 # ---------------------------------------------------------------------------
 # RAObservation
 # ---------------------------------------------------------------------------
+
+
+class TestRepushCorrelation:
+    """ODS re-publishes the same observation with its window slid forward,
+    under a new ext_id. It should fold into the existing claim."""
+
+    @staticmethod
+    def _repush_of(claim, ext_id, start_offset_hours, end_offset_hours):
+        obs = _make_obs(ext_id, start_offset_hours, end_offset_hours)
+        claim.name = obs.name
+        return obs
+
+    def test_started_repush_not_duplicated(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}first",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        repush = self._repush_of(old, f"{ODS_PREFIX}second", -0.5, 1.5)
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client(existing_raobs=[_make_raobs(f"{ODS_PREFIX}first")])
+
+        stats = _run(zmc, ra, _make_source([repush]))
+
+        assert stats.created == 0
+        assert stats.deleted == 0
+        zmc.create_claim.assert_not_called()
+        zmc.delete_claim.assert_not_called()
+
+    def test_future_repush_keeps_ext_id_and_start(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}first",
+            NOW + datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=2),
+        )
+        repush = self._repush_of(old, f"{ODS_PREFIX}second", 1.5, 2.5)
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client()
+
+        stats = _run(zmc, ra, _make_source([repush]))
+
+        assert stats.deleted == 1
+        assert stats.created == 1
+        grant = zmc.create_claim.call_args.kwargs["body"].grant
+        assert grant.ext_id == f"{ODS_PREFIX}first"
+        assert grant.starts_at == old.grant.starts_at
+        assert grant.expires_at == repush.end
+
+    def test_unchanged_end_is_a_match(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}first",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        repush = self._repush_of(old, f"{ODS_PREFIX}second", -0.5, 1)
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client(existing_raobs=[_make_raobs(f"{ODS_PREFIX}first")])
+
+        stats = _run(zmc, ra, _make_source([repush]))
+
+        assert stats.unchanged == 1
+        zmc.create_claim.assert_not_called()
+
+    def test_new_session_not_correlated(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}first",
+            NOW - datetime.timedelta(hours=2),
+            NOW - datetime.timedelta(hours=1),
+        )
+        later = self._repush_of(old, f"{ODS_PREFIX}second", 1, 2)
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client()
+
+        stats = _run(zmc, ra, _make_source([later]))
+
+        assert stats.created == 1
+        body = zmc.create_claim.call_args.kwargs["body"]
+        assert body.ext_id == f"{ODS_PREFIX}second"
+
+    def test_other_source_not_correlated(self):
+        old = _make_claim(
+            f"{ODS_PREFIX}first",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        other = _make_obs(f"{ODS_PREFIX}second", -0.5, 1.5)
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client()
+
+        stats = _run(zmc, ra, _make_source([other]))
+
+        assert stats.created == 1
+
+    def test_denied_claim_not_correlated(self):
+        denied = _make_claim(
+            f"{ODS_PREFIX}denied",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        denied.denied_at = NOW - datetime.timedelta(hours=1)
+        approved = _make_claim(
+            f"{ODS_PREFIX}approved",
+            NOW - datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=1),
+        )
+        repush = self._repush_of(denied, f"{ODS_PREFIX}second", -0.5, 1)
+        approved.name = repush.name
+        zmc = _make_zmc_client(existing_claims=[denied, approved])
+        ra = _make_ra_client()
+
+        _run(zmc, ra, _make_source([repush]))
+
+        zmc.create_claim.assert_not_called()
+
+    def test_gcal_not_correlated(self):
+        old = _make_claim(
+            f"{GCAL_PREFIX}first",
+            NOW + datetime.timedelta(hours=1),
+            NOW + datetime.timedelta(hours=2),
+        )
+        edited = self._repush_of(old, f"{GCAL_PREFIX}second", 1.5, 2.5)
+        zmc = _make_zmc_client(existing_claims=[old])
+        ra = _make_ra_client()
+
+        _run(zmc, ra, _make_source([edited], ods=False))
+
+        body = zmc.create_claim.call_args.kwargs["body"]
+        assert body.ext_id == f"{GCAL_PREFIX}second"
 
 
 class TestRaobs:
