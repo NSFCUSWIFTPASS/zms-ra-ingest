@@ -60,11 +60,12 @@ class Observation:
 class RASource(Protocol):
     """Interface that each RA data source implements.
 
-    Beyond fetching observations, a source declares four reconcile policies:
+    Beyond fetching observations, a source declares five reconcile policies:
     how its grants are scoped (`ext_id_prefix`), when a live grant is protected
     from teardown (`protect_started`), whether it records an RAObservation in
-    zms-ra (`writes_observations`), and which source wins a spectrum conflict
-    (`priority`).
+    zms-ra (`writes_observations`), which source wins a spectrum conflict
+    (`priority`), and whether a re-published record should be matched to the
+    claim it replaces (`correlate_repushes`).
     """
 
     @property
@@ -111,6 +112,14 @@ class RASource(Protocol):
         ZMC honours this because ra-ingest creates claims; non-claim grants are
         scheduled at their policy's priority instead.
         """
+        ...
+
+    @property
+    def correlate_repushes(self) -> bool:
+        """True if the source has no stable record id, so a re-published
+        record (same observation, window slid) arrives under a new ext_id.
+        The reconciler then matches it to the existing claim instead of minting
+        a duplicate (ODS). False when ext_ids are stable (gcal)."""
         ...
 
     def fetch_observations(self) -> list[Observation]:

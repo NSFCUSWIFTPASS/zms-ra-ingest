@@ -18,6 +18,7 @@ Structure: the first pass classifies each observation into `to_delete` /
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import logging
 from dataclasses import dataclass
@@ -81,6 +82,9 @@ def reconcile(
         if c.ext_id
     }
     current_raobs = _list_raobs(ra_client, source)
+
+    if source.correlate_repushes:
+        desired = _correlate_repushes(desired, current)
 
     # Classify: sort each observation into to_delete / to_create (no I/O here).
     to_delete: list[tuple[str, Claim]] = []
@@ -159,6 +163,52 @@ def reconcile(
             stats.errors += 1
 
     return stats
+
+
+def _correlate_repushes(
+    desired: dict[str, Observation], current: dict[str, Claim]
+) -> dict[str, Observation]:
+    """Fold re-published records into the claim they replace.
+
+    A source without stable ids (ODS) re-publishes the same observation with
+    its window slid forward, so it arrives under a new ext_id. Match it to a
+    claim whose record has vanished, with the same name, description and band
+    and an overlapping window, then adopt that claim's ext_id and start. The
+    claim stays one observation instead of two overlapping claims that deny
+    each other.
+    """
+    vanished = [claim for ext_id, claim in current.items() if ext_id not in desired]
+    result: dict[str, Observation] = {}
+    for ext_id, obs in desired.items():
+        claim = None if ext_id in current else _find_repushed(obs, vanished)
+        if claim is None:
+            result[ext_id] = obs
+            continue
+        vanished.remove(claim)
+        LOG.info("Matched re-push %s to claim %s", ext_id, claim.ext_id)
+        result[claim.ext_id] = dataclasses.replace(
+            obs, ext_id=claim.ext_id, start=claim.grant.starts_at
+        )
+    return result
+
+
+def _find_repushed(obs: Observation, claims: list[Claim]) -> Claim | None:
+    """The claim obs is a re-push of: not denied, same name, description and
+    band, and an overlapping window. None if there isn't one."""
+    for claim in claims:
+        grant = claim.grant
+        c = grant.constraints[0].constraint
+        if (
+            not claim.denied_at
+            and claim.name == obs.name
+            and claim.description == obs.description
+            and c.min_freq == obs.min_freq_hz
+            and c.max_freq == obs.max_freq_hz
+            and grant.starts_at < obs.end
+            and obs.start < grant.expires_at
+        ):
+            return claim
+    return None
 
 
 def _protected(claim: Claim, source: RASource, now: datetime.datetime) -> bool:

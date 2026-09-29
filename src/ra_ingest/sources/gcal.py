@@ -96,6 +96,10 @@ class GcalSource:
     def priority(self) -> int:
         return self._priority
 
+    @property
+    def correlate_repushes(self) -> bool:
+        return False  # Calendar event ids are stable.
+
     def fetch_observations(self) -> list[Observation]:
         """Fetch future events from gcal and return them as Observations."""
         now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)

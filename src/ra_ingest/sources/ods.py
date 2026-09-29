@@ -80,6 +80,10 @@ class OdsSource:
     def priority(self) -> int:
         return self._priority
 
+    @property
+    def correlate_repushes(self) -> bool:
+        return True  # ODS has no record id; a re-push slides the start time.
+
     def fetch_observations(self) -> list[Observation]:
         try:
             resp = self._client.get(self._url)
