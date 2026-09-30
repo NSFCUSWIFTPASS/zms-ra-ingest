@@ -119,6 +119,7 @@ class TestOdsSource:
         assert source.protect_started is True
         assert source.writes_observations is True
         assert source.priority == 1023
+        assert source.correlate_repushes is True
 
     def test_priority_is_configurable(self):
         source = OdsSource(

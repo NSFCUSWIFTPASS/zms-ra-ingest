@@ -148,11 +148,12 @@ def main():
                     picker=spectrum_picker,
                 )
                 LOG.info(
-                    "Reconcile done (%s): created=%d deleted=%d unchanged=%d "
-                    "errors=%d ra_created=%d ra_deleted=%d",
+                    "Reconcile done (%s): created=%d deleted=%d replaced=%d "
+                    "unchanged=%d errors=%d ra_created=%d ra_deleted=%d",
                     source.source_type,
                     stats.created,
                     stats.deleted,
+                    stats.replaced,
                     stats.unchanged,
                     stats.errors,
                     stats.ra_created,
