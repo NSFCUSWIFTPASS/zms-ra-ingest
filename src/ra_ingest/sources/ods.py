@@ -84,6 +84,11 @@ class OdsSource:
     def correlate_repushes(self) -> bool:
         return True  # ODS has no record id; a re-push slides the start time.
 
+    @property
+    def claim_lookback(self) -> datetime.timedelta | None:
+        # Records are published shortly before they start and last hours.
+        return datetime.timedelta(days=2)
+
     def fetch_observations(self) -> list[Observation]:
         try:
             resp = self._client.get(self._url)

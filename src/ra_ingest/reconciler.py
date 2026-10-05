@@ -81,9 +81,11 @@ def reconcile(
         stats.errors += 1
         return stats
 
+    lookback = source.claim_lookback
+    since = now - lookback if lookback is not None else None
     current = {
         c.ext_id: c
-        for c in _list_claims(zmc_client, element_id, source.ext_id_prefix)
+        for c in _list_claims(zmc_client, element_id, source.ext_id_prefix, since)
         if c.ext_id
     }
     current_raobs = _list_raobs(ra_client, source)
@@ -261,8 +263,11 @@ def _list_claims(
     client: ZmsZmcClient,
     element_id: str,
     ext_id_prefix: str,
+    since: datetime.datetime | None = None,
 ) -> list[Claim]:
-    """Fetch all non-deleted claims for element_id whose ext_id has the prefix."""
+    """Fetch all non-deleted claims for element_id whose ext_id has the prefix,
+    created at or after since if given."""
+    window = {"start": since} if since is not None else {}
 
     def fetch(page: int) -> tuple[list[Claim], int] | None:
         resp = client.list_claims(
@@ -271,6 +276,7 @@ def _list_claims(
             page=page,
             items_per_page=100,
             x_api_elaborate="True",
+            **window,
         )
         if not resp.is_success or not isinstance(resp.parsed, ClaimList):
             LOG.error("Failed to list claims (page %d): %s", page, resp.status_code)
