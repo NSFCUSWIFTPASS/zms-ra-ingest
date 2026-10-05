@@ -194,6 +194,7 @@ class TestGcalSource:
         assert src.protect_started is False
         assert src.writes_observations is False
         assert src.correlate_repushes is False
+        assert src.claim_lookback is None
         # Below the ODS default (1023) so an observation preempts a calendar block.
         assert src.priority == 900
 

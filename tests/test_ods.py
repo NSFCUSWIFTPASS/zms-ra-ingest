@@ -120,6 +120,7 @@ class TestOdsSource:
         assert source.writes_observations is True
         assert source.priority == 1023
         assert source.correlate_repushes is True
+        assert source.claim_lookback == datetime.timedelta(days=2)
 
     def test_priority_is_configurable(self):
         source = OdsSource(
