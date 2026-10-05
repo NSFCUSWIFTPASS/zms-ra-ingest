@@ -104,7 +104,7 @@ def _make_claim_for(obs, grant_id=None):
     )
 
 
-def _make_source(observations, *, ods=True, prefix=None, priority=None):
+def _make_source(observations, *, ods=True, prefix=None, priority=None, lookback=None):
     source = MagicMock()
     source.source_type = "ra-ods" if ods else "gcal"
     source.source_name = "hcro" if ods else "ata"
@@ -112,6 +112,7 @@ def _make_source(observations, *, ods=True, prefix=None, priority=None):
     source.protect_started = ods
     source.writes_observations = ods
     source.correlate_repushes = ods
+    source.claim_lookback = lookback
     source.priority = priority if priority is not None else (1023 if ods else 900)
     source.fetch_observations.return_value = observations
     return source
@@ -445,6 +446,24 @@ class TestReconcileGrants:
 # ---------------------------------------------------------------------------
 # RAObservation
 # ---------------------------------------------------------------------------
+
+
+class TestClaimLookback:
+    def test_lookback_bounds_claim_query(self):
+        zmc = _make_zmc_client()
+        source = _make_source([], lookback=datetime.timedelta(days=2))
+
+        _run(zmc, _make_ra_client(), source)
+
+        kwargs = zmc.list_claims.call_args.kwargs
+        assert kwargs["start"] == NOW - datetime.timedelta(days=2)
+
+    def test_no_lookback_queries_all_claims(self):
+        zmc = _make_zmc_client()
+
+        _run(zmc, _make_ra_client(), _make_source([], ods=False))
+
+        assert "start" not in zmc.list_claims.call_args.kwargs
 
 
 class TestRepushCorrelation:

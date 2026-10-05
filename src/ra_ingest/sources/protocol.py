@@ -64,8 +64,9 @@ class RASource(Protocol):
     how its grants are scoped (`ext_id_prefix`), when a live grant is protected
     from teardown (`protect_started`), whether it records an RAObservation in
     zms-ra (`writes_observations`), which source wins a spectrum conflict
-    (`priority`), and whether a re-published record should be matched to the
-    claim it replaces (`correlate_repushes`).
+    (`priority`), whether a re-published record should be matched to the
+    claim it replaces (`correlate_repushes`), and how far back to look for its
+    claims (`claim_lookback`).
     """
 
     @property
@@ -120,6 +121,14 @@ class RASource(Protocol):
         record (same observation, window slid) arrives under a new ext_id.
         The reconciler then matches it to the existing claim instead of minting
         a duplicate (ODS). False when ext_ids are stable (gcal)."""
+        ...
+
+    @property
+    def claim_lookback(self) -> datetime.timedelta | None:
+        """Only consider claims created within this window. Past claims are
+        never deleted, so without a bound every poll lists all of them. Must
+        cover the longest a claim can be created ahead of its end. None
+        considers every claim (gcal, whose events are claimed weeks ahead)."""
         ...
 
     def fetch_observations(self) -> list[Observation]:

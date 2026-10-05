@@ -100,6 +100,10 @@ class GcalSource:
     def correlate_repushes(self) -> bool:
         return False  # Calendar event ids are stable.
 
+    @property
+    def claim_lookback(self) -> datetime.timedelta | None:
+        return None  # Events are claimed as soon as they appear, often weeks ahead.
+
     def fetch_observations(self) -> list[Observation]:
         """Fetch future events from gcal and return them as Observations."""
         now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
