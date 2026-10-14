@@ -4,7 +4,11 @@ Each poll, given whether transmitting is allowed (ata_status):
   * In use: make sure every guarded spectrum has a live busy claim covering
     its whole range. Create one if missing; extend it by replacing its grant
     once less than half of HOLD remains.
-  * Not in use: delete the busy claims so transmitters are released at once.
+  * Not in use: end the busy claims early (replace with an end RELEASE_MARGIN
+    away) so transmitters are released.
+
+Ended claims are kept, so each busy period stays in ZMS history with its real
+start and end. Denied claims protected nothing and are deleted.
 
 Claims always end within HOLD, so if this service stops, protection lapses on
 its own instead of blocking transmitters forever. ZMS is the only state.
@@ -35,12 +39,18 @@ LOG = logging.getLogger(__name__)
 EXT_ID_PREFIX = "ata-busy-"
 ALL_SPECTRUMS = "*"
 
+# Busy claims older than this are history; must exceed the longest busy period.
+LOOKBACK = datetime.timedelta(days=7)
+# How soon an ended-early claim actually ends.
+RELEASE_MARGIN = datetime.timedelta(minutes=1)
+
 
 @dataclass
 class GuardStats:
     created: int = 0
     extended: int = 0
     released: int = 0
+    removed: int = 0
     errors: int = 0
 
 
@@ -62,29 +72,32 @@ def guard(
     guarded = _select_spectrums(picker.spectrums, spectrum_names)
     guarded_ids = {str(s.id) for s in guarded}
 
-    claims = list_claims(zmc_client, element_id, EXT_ID_PREFIX)
+    claims = list_claims(zmc_client, element_id, EXT_ID_PREFIX, since=now - LOOKBACK)
 
-    # Clear out claims that no longer protect anything: ended, denied, or on a
-    # spectrum that is no longer guarded.
+    # Keep one live claim per guarded spectrum. Ended claims stay as history;
+    # denied ones are deleted; extras and unguarded ones are ended early.
     live: dict[str, Claim] = {}
     for claim in claims:
         spectrum_id = str(claim.grant.spectrum_id)
-        if (
-            claim_ended(claim, now)
-            or claim.denied_at
-            or spectrum_id not in guarded_ids
-            or spectrum_id in live
-        ):
-            _release(zmc_client, claim, stats)
-        else:
-            live[spectrum_id] = claim
+        try:
+            if claim.denied_at:
+                _remove(zmc_client, claim, stats)
+            elif claim_ended(claim, now):
+                continue
+            elif spectrum_id not in guarded_ids or spectrum_id in live:
+                _release(zmc_client, claim, now, stats)
+            else:
+                live[spectrum_id] = claim
+        except Exception:
+            LOG.exception("Error tidying busy claim %s", claim.ext_id)
+            stats.errors += 1
 
     for spectrum in guarded:
         claim = live.get(str(spectrum.id))
         try:
             if allowed:
                 if claim:
-                    _release(zmc_client, claim, stats)
+                    _release(zmc_client, claim, now, stats)
             elif claim is None:
                 _create(
                     zmc_client, spectrum, element_id, now, now + hold, priority, stats
@@ -167,9 +180,38 @@ def _extend(
     stats.extended += 1
 
 
-def _release(zmc_client: ZmsZmcClient, claim: Claim, stats: GuardStats) -> None:
+def _release(
+    zmc_client: ZmsZmcClient, claim: Claim, now: datetime.datetime, stats: GuardStats
+) -> None:
+    """End the claim RELEASE_MARGIN from now, unless it already ends sooner."""
+    if _ends_within(claim, now, RELEASE_MARGIN):
+        return
+    old = claim.grant
+    end = now + RELEASE_MARGIN
+    grant = build_grant(
+        element_id=old.element_id,
+        spectrum_id=str(old.spectrum_id),
+        ext_id=claim.ext_id,
+        name=old.name,
+        description=old.description,
+        priority=old.priority,
+        start=old.starts_at,
+        end=end,
+        ranges=[
+            (gc.constraint.min_freq, gc.constraint.max_freq) for gc in old.constraints
+        ],
+    )
+    if replace_grant(zmc_client, claim, grant) is None:
+        stats.errors += 1
+        return
+    LOG.info("ATA not in use: ending busy claim %s at %s", claim.ext_id, end)
+    stats.released += 1
+
+
+def _remove(zmc_client: ZmsZmcClient, claim: Claim, stats: GuardStats) -> None:
+    """Delete a denied claim; it never protected anything."""
     if delete_claim(zmc_client, claim):
-        stats.released += 1
+        stats.removed += 1
     else:
         stats.errors += 1
 

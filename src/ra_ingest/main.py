@@ -111,11 +111,12 @@ def _run_ata_guard(
         )
         LOG.info(
             "ATA guard done: transmission_allowed=%s created=%d extended=%d "
-            "released=%d errors=%d",
+            "released=%d removed=%d errors=%d",
             allowed,
             stats.created,
             stats.extended,
             stats.released,
+            stats.removed,
             stats.errors,
         )
     except Exception:
