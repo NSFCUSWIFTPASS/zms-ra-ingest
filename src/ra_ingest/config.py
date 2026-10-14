@@ -58,6 +58,32 @@ class Settings(BaseSettings):
         default=True, description="Verify SSL for ZMC connection from gcal sync"
     )
 
+    # ATA antenna-status guard (optional; blank host disables it)
+    ata_db_host: str = Field(
+        default="", description="MySQL host with the ATA antstatus table"
+    )
+    ata_db_port: int = Field(default=3306, description="MySQL port")
+    ata_db_user: str = Field(default="", description="Read-only MySQL user")
+    ata_db_password: str = Field(default="", description="MySQL password")
+    ata_db_name: str = Field(
+        default="grafanadata", description="Database holding antstatus"
+    )
+    ata_guard_spectrums: str = Field(
+        default="ISM-915",
+        description=(
+            "Comma-separated spectrum names to block while the ATA is in use, "
+            "or * for every spectrum on the element"
+        ),
+    )
+    ata_guard_hold_minutes: int = Field(
+        default=30,
+        gt=0,
+        description="How far ahead each busy claim reaches; extended while in use",
+    )
+    ata_guard_priority: int = Field(
+        default=1023, ge=-1023, le=1023, description="Busy claim priority"
+    )
+
     # Email reports (optional)
     report_enabled: bool = Field(
         default=False, description="Enable daily email reports"
