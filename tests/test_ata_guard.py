@@ -13,7 +13,7 @@ from zmsclient.zmc.v1.models import (
     SpectrumConstraint,
 )
 
-from ra_ingest.ata_guard import EXT_ID_PREFIX, guard
+from ra_ingest.ata_guard import EXT_ID_PREFIX, LOOKBACK, RELEASE_MARGIN, guard
 
 UTC = datetime.UTC
 NOW = datetime.datetime(2026, 10, 13, 18, 0, 0, tzinfo=UTC)
@@ -169,21 +169,24 @@ class TestInUse:
         assert kwargs["body"].starts_at == claim.grant.starts_at
         assert kwargs["body"].expires_at == NOW + HOLD
 
-    def test_ended_claim_is_replaced_by_new_one(self):
+    def test_ended_claim_is_kept_and_a_new_one_created(self):
         zmc = _zmc([_claim("spec-ism", start_offset_min=-60, end_offset_min=-5)])
 
         stats = _run(zmc, allowed=False)
 
-        assert stats.released == 1
         assert stats.created == 1
+        assert (stats.released, stats.removed) == (0, 0)
+        zmc.delete_claim.assert_not_called()
+        zmc.replace_grant.assert_not_called()
 
-    def test_denied_claim_is_released_and_recreated(self):
+    def test_denied_claim_is_deleted_and_recreated(self):
         zmc = _zmc([_claim("spec-ism", denied=True)])
 
         stats = _run(zmc, allowed=False)
 
-        assert stats.released == 1
+        assert stats.removed == 1
         assert stats.created == 1
+        zmc.delete_claim.assert_called_once_with(claim_id="claim-spec-ism")
 
     def test_denied_create_counts_as_error(self):
         zmc = _zmc()
@@ -196,14 +199,27 @@ class TestInUse:
 
 
 class TestNotInUse:
-    def test_live_claim_is_released(self):
-        zmc = _zmc([_claim("spec-ism")])
+    def test_live_claim_is_ended_early(self):
+        claim = _claim("spec-ism")
+        zmc = _zmc([claim])
 
         stats = _run(zmc, allowed=True)
 
         assert stats.released == 1
-        zmc.delete_claim.assert_called_once_with(claim_id="claim-spec-ism")
+        kwargs = zmc.replace_grant.call_args.kwargs
+        assert kwargs["grant_id"] == "grant-spec-ism"
+        assert kwargs["body"].starts_at == claim.grant.starts_at
+        assert kwargs["body"].expires_at == NOW + RELEASE_MARGIN
+        zmc.delete_claim.assert_not_called()
         zmc.create_claim.assert_not_called()
+
+    def test_claim_already_ending_is_left_alone(self):
+        zmc = _zmc([_claim("spec-ism", end_offset_min=0.5)])
+
+        stats = _run(zmc, allowed=True)
+
+        assert stats.released == 0
+        zmc.replace_grant.assert_not_called()
 
     def test_nothing_to_do(self):
         zmc = _zmc()
@@ -229,10 +245,20 @@ class TestSpectrumSelection:
         assert stats.created == 0
         zmc.create_claim.assert_not_called()
 
-    def test_claim_on_unguarded_spectrum_is_released(self):
+    def test_claim_on_unguarded_spectrum_is_ended_early(self):
         zmc = _zmc([_claim("spec-l")])
 
         stats = _run(zmc, allowed=False, names=("ISM-915",))
 
         assert stats.released == 1
+        assert zmc.replace_grant.call_args.kwargs["grant_id"] == "grant-spec-l"
         assert stats.created == 1
+
+
+class TestHistory:
+    def test_claim_query_is_bounded_by_lookback(self):
+        zmc = _zmc()
+
+        _run(zmc, allowed=True)
+
+        assert zmc.list_claims.call_args.kwargs["start"] == NOW - LOOKBACK
