@@ -35,6 +35,11 @@ class SpectrumPicker:
         )
         return len(self._spectrums)
 
+    @property
+    def spectrums(self) -> list[Spectrum]:
+        """The spectrums loaded by the last refresh()."""
+        return self._spectrums
+
     def pick(self, min_freq_hz: int, max_freq_hz: int) -> Spectrum | None:
         """Return the spectrum whose narrowest constraint fully contains
         [min_freq_hz, max_freq_hz], or None if no single constraint does."""

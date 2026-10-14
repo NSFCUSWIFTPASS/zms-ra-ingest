@@ -20,12 +20,8 @@ from zmsclient.zmc.v1.models import (
     Spectrum,
 )
 
-from ra_ingest.reconciler import (
-    _claim_ended,
-    _claim_matches,
-    _claim_started,
-    reconcile,
-)
+from ra_ingest.claims import claim_ended, claim_started
+from ra_ingest.reconciler import _claim_matches, reconcile
 from ra_ingest.sources.protocol import Observation, ObsTarget
 
 UTC = datetime.UTC
@@ -179,17 +175,17 @@ class TestClaimStarted:
         c = _make_claim(
             "x", NOW + datetime.timedelta(hours=1), NOW + datetime.timedelta(hours=2)
         )
-        assert _claim_started(c, NOW) is False
+        assert claim_started(c, NOW) is False
 
     def test_active(self):
         c = _make_claim(
             "x", NOW - datetime.timedelta(hours=1), NOW + datetime.timedelta(hours=1)
         )
-        assert _claim_started(c, NOW) is True
+        assert claim_started(c, NOW) is True
 
     def test_starting_now(self):
         c = _make_claim("x", NOW, NOW + datetime.timedelta(hours=1))
-        assert _claim_started(c, NOW) is True
+        assert claim_started(c, NOW) is True
 
 
 class TestClaimEnded:
@@ -197,19 +193,19 @@ class TestClaimEnded:
         c = _make_claim(
             "x", NOW + datetime.timedelta(hours=1), NOW + datetime.timedelta(hours=2)
         )
-        assert _claim_ended(c, NOW) is False
+        assert claim_ended(c, NOW) is False
 
     def test_active(self):
         c = _make_claim(
             "x", NOW - datetime.timedelta(hours=1), NOW + datetime.timedelta(hours=1)
         )
-        assert _claim_ended(c, NOW) is False
+        assert claim_ended(c, NOW) is False
 
     def test_past(self):
         c = _make_claim(
             "x", NOW - datetime.timedelta(hours=2), NOW - datetime.timedelta(hours=1)
         )
-        assert _claim_ended(c, NOW) is True
+        assert claim_ended(c, NOW) is True
 
 
 class TestClaimMatches:

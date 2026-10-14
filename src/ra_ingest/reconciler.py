@@ -25,20 +25,21 @@ import dataclasses
 import datetime
 import logging
 from dataclasses import dataclass
-from typing import cast
 
 from zmsclient.zmc.client import ZmsZmcClient
-from zmsclient.zmc.v1.models import (
-    Claim,
-    ClaimList,
-    Constraint,
-    Grant,
-    GrantConstraint,
-    GrantOpStatus,
-    Spectrum,
-)
+from zmsclient.zmc.v1.models import Claim, Grant, Spectrum
 
-from .pagination import paginate
+from .claims import (
+    build_claim,
+    build_grant,
+    claim_ended,
+    claim_started,
+    create_claim,
+    delete_claim,
+    grant_id,
+    list_claims,
+    replace_grant,
+)
 from .ra_client import ZmsRaClient, observation_to_ra_body
 from .sources.protocol import Observation, RASource, SourceFetchError
 from .spectrum_picker import SpectrumPicker
@@ -85,7 +86,7 @@ def reconcile(
     since = now - lookback if lookback is not None else None
     current = {
         c.ext_id: c
-        for c in _list_claims(zmc_client, element_id, source.ext_id_prefix, since)
+        for c in list_claims(zmc_client, element_id, source.ext_id_prefix, since)
         if c.ext_id
     }
     current_raobs = _list_raobs(ra_client, source)
@@ -119,7 +120,7 @@ def reconcile(
                 if not _protected(claim, source, now):
                     to_delete.append((ext_id, claim))
                     to_create.append(obs)
-                elif not _claim_ended(claim, now) and obs.end > now:
+                elif not claim_ended(claim, now) and obs.end > now:
                     to_replace.append((claim, obs))
                 else:
                     LOG.warning("Observation %s changed but grant is protected", ext_id)
@@ -129,7 +130,7 @@ def reconcile(
                 if source.writes_observations and ext_id not in current_raobs:
                     # Grant is correct but its raobs is missing (an earlier POST
                     # failed) -- re-post it.
-                    if _post_raobs(ra_client, obs, _grant_id(claim)):
+                    if _post_raobs(ra_client, obs, grant_id(claim)):
                         stats.ra_created += 1
                     else:
                         stats.errors += 1
@@ -149,7 +150,7 @@ def reconcile(
                     stats.ra_deleted += 1
                 else:
                     stats.errors += 1
-            if _delete_claim(zmc_client, claim):
+            if delete_claim(zmc_client, claim):
                 stats.deleted += 1
             else:
                 stats.errors += 1
@@ -161,10 +162,10 @@ def reconcile(
     # re-posted to reference the new grant.
     for claim, obs in to_replace:
         try:
-            grant_id = _replace_grant(
+            new_grant_id = _replace_grant(
                 zmc_client, claim, obs, element_id, picker, source
             )
-            if grant_id is None:
+            if new_grant_id is None:
                 stats.errors += 1
                 continue
             stats.replaced += 1
@@ -174,7 +175,7 @@ def reconcile(
                         stats.ra_deleted += 1
                     else:
                         stats.errors += 1
-                if _post_raobs(ra_client, obs, grant_id):
+                if _post_raobs(ra_client, obs, new_grant_id):
                     stats.ra_created += 1
                 else:
                     stats.errors += 1
@@ -184,13 +185,13 @@ def reconcile(
 
     for obs in to_create:
         try:
-            grant_id = _create_claim(zmc_client, obs, element_id, picker, source)
-            if grant_id is None:
+            new_grant_id = _create_claim(zmc_client, obs, element_id, picker, source)
+            if new_grant_id is None:
                 stats.errors += 1
                 continue
             stats.created += 1
             if source.writes_observations:
-                if _post_raobs(ra_client, obs, grant_id):
+                if _post_raobs(ra_client, obs, new_grant_id):
                     stats.ra_created += 1
                 else:
                     stats.errors += 1
@@ -255,38 +256,8 @@ def _protected(claim: Claim, source: RASource, now: datetime.datetime) -> bool:
     grant has ENDED (an edit is authoritative and should take effect).
     """
     if source.protect_started:
-        return _claim_started(claim, now)
-    return _claim_ended(claim, now)
-
-
-def _list_claims(
-    client: ZmsZmcClient,
-    element_id: str,
-    ext_id_prefix: str,
-    since: datetime.datetime | None = None,
-) -> list[Claim]:
-    """Fetch all non-deleted claims for element_id whose ext_id has the prefix,
-    created at or after since if given."""
-    window = {"start": since} if since is not None else {}
-
-    def fetch(page: int) -> tuple[list[Claim], int] | None:
-        resp = client.list_claims(
-            element_id=element_id,
-            ext_id=ext_id_prefix,
-            page=page,
-            items_per_page=100,
-            x_api_elaborate="True",
-            **window,
-        )
-        if not resp.is_success or not isinstance(resp.parsed, ClaimList):
-            LOG.error("Failed to list claims (page %d): %s", page, resp.status_code)
-            return None
-        return resp.parsed.claims, resp.parsed.pages
-
-    # ext_id filter is an ILIKE substring match; enforce prefix ourselves.
-    return [
-        c for c in paginate(fetch) if c.ext_id and c.ext_id.startswith(ext_id_prefix)
-    ]
+        return claim_started(claim, now)
+    return claim_ended(claim, now)
 
 
 def _list_raobs(ra_client: ZmsRaClient, source: RASource) -> dict[str, dict]:
@@ -316,13 +287,14 @@ def _create_claim(
     spectrum = _pick_spectrum(picker, obs)
     if spectrum is None:
         return None
-    body = _build_claim(obs, element_id, str(spectrum.id), source)
-    resp = zmc_client.create_claim(body=body, x_api_elaborate="true")
-    if not resp.is_success:
-        LOG.error("Failed to create claim for %s: %s", obs.ext_id, resp.status_code)
+    grant = _grant_for(obs, element_id, str(spectrum.id), source)
+    created = create_claim(
+        zmc_client, build_claim(grant, source.source_type, source.source_name)
+    )
+    if created is None:
         return None
     LOG.info("Created claim for %s on spectrum %s", obs.ext_id, spectrum.name)
-    return str(cast(Claim, resp.parsed).grant.id)
+    return grant_id(created)
 
 
 def _replace_grant(
@@ -339,15 +311,12 @@ def _replace_grant(
     spectrum = _pick_spectrum(picker, obs)
     if spectrum is None:
         return None
-    body = _build_grant(obs, element_id, str(spectrum.id), source)
-    resp = zmc_client.replace_grant(
-        grant_id=_grant_id(claim), body=body, x_api_elaborate="true"
-    )
-    if not resp.is_success:
-        LOG.error("Failed to replace grant for %s: %s", obs.ext_id, resp.status_code)
+    grant = _grant_for(obs, element_id, str(spectrum.id), source)
+    replacement = replace_grant(zmc_client, claim, grant)
+    if replacement is None:
         return None
     LOG.info("Replaced grant for %s (now ends %s)", obs.ext_id, obs.end)
-    return str(cast(Grant, resp.parsed).id)
+    return str(replacement.id)
 
 
 def _pick_spectrum(picker: SpectrumPicker, obs: Observation) -> Spectrum | None:
@@ -363,16 +332,6 @@ def _pick_spectrum(picker: SpectrumPicker, obs: Observation) -> Spectrum | None:
     return spectrum
 
 
-def _delete_claim(zmc_client: ZmsZmcClient, claim: Claim) -> bool:
-    """Delete a claim (and its grant). True on success."""
-    resp = zmc_client.delete_claim(claim_id=str(claim.id))
-    if resp.is_success:
-        LOG.info("Deleted claim %s (ext_id=%s)", claim.id, claim.ext_id)
-        return True
-    LOG.error("Failed to delete claim %s: %s", claim.id, resp.status_code)
-    return False
-
-
 def _post_raobs(ra_client: ZmsRaClient, obs: Observation, grant_id: str) -> bool:
     """POST the RAObservation for obs, referencing its grant. True on success."""
     if ra_client.create_observation(observation_to_ra_body(obs, grant_id)) is not None:
@@ -381,71 +340,21 @@ def _post_raobs(ra_client: ZmsRaClient, obs: Observation, grant_id: str) -> bool
     return False
 
 
-def _build_grant(
-    obs: Observation,
-    element_id: str,
-    spectrum_id: str,
-    source: RASource,
+def _grant_for(
+    obs: Observation, element_id: str, spectrum_id: str, source: RASource
 ) -> Grant:
-    return Grant(
-        name=obs.name,
-        description=obs.description,
+    """The grant for an observation: its window and band at the source's priority."""
+    return build_grant(
         element_id=element_id,
         spectrum_id=spectrum_id,
         ext_id=obs.ext_id,
-        priority=source.priority,
-        starts_at=obs.start,
-        expires_at=obs.end,
-        constraints=[
-            GrantConstraint(
-                constraint=Constraint(
-                    min_freq=obs.min_freq_hz,
-                    max_freq=obs.max_freq_hz,
-                    max_eirp=0.0,
-                    exclusive=True,
-                )
-            )
-        ],
-        op_status=GrantOpStatus.SUBMITTED,
-    )
-
-
-def _build_claim(
-    obs: Observation,
-    element_id: str,
-    spectrum_id: str,
-    source: RASource,
-) -> Claim:
-    return Claim(
         name=obs.name,
         description=obs.description,
-        type=source.source_type,
-        source=source.source_name,
-        element_id=element_id,
-        ext_id=obs.ext_id,
-        grant=_build_grant(obs, element_id, spectrum_id, source),
+        priority=source.priority,
+        start=obs.start,
+        end=obs.end,
+        ranges=[(obs.min_freq_hz, obs.max_freq_hz)],
     )
-
-
-def _grant_id(claim: Claim) -> str:
-    """The grant id of an elaborated claim, as a string."""
-    return str(claim.grant.id)
-
-
-def _claim_started(claim: Claim, now: datetime.datetime) -> bool:
-    """True if the claim's grant has already started."""
-    start = claim.grant.starts_at
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=datetime.UTC)
-    return start <= now
-
-
-def _claim_ended(claim: Claim, now: datetime.datetime) -> bool:
-    """True if the claim's grant has already ended (expired)."""
-    end = claim.grant.expires_at
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=datetime.UTC)
-    return end <= now
 
 
 def _claim_matches(claim: Claim, obs: Observation) -> bool:

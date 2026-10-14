@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import logging
 import re
@@ -12,6 +13,8 @@ import time
 
 from zmsclient.zmc.client import ZmsZmcClient
 
+from .ata_guard import guard
+from .ata_status import AtaStatusReader
 from .config import Settings
 from .ra_client import ZmsRaClient
 from .reconciler import reconcile
@@ -88,6 +91,38 @@ def _load_sources(settings: Settings) -> list:
     return sources
 
 
+def _run_ata_guard(
+    reader: AtaStatusReader,
+    zmc_client: ZmsZmcClient,
+    picker: SpectrumPicker,
+    settings: Settings,
+) -> None:
+    """Check the ATA antenna status and hold or release the busy claims."""
+    allowed = reader.transmission_allowed()
+    try:
+        stats = guard(
+            zmc_client,
+            settings.element_id,
+            picker,
+            [n.strip() for n in settings.ata_guard_spectrums.split(",") if n.strip()],
+            allowed=allowed,
+            hold=datetime.timedelta(minutes=settings.ata_guard_hold_minutes),
+            priority=settings.ata_guard_priority,
+        )
+        LOG.info(
+            "ATA guard done: transmission_allowed=%s created=%d extended=%d "
+            "released=%d removed=%d errors=%d",
+            allowed,
+            stats.created,
+            stats.extended,
+            stats.released,
+            stats.removed,
+            stats.errors,
+        )
+    except Exception:
+        LOG.exception("Error running ATA guard")
+
+
 def main():
     parser = argparse.ArgumentParser(description="ZMS RA Facility Ingest Service")
     parser.add_argument(
@@ -129,6 +164,17 @@ def main():
 
     spectrum_picker = SpectrumPicker(zmc_client, settings.element_id)
 
+    ata_reader = None
+    if settings.ata_db_host:
+        ata_reader = AtaStatusReader(
+            host=settings.ata_db_host,
+            port=settings.ata_db_port,
+            user=settings.ata_db_user,
+            password=settings.ata_db_password,
+            database=settings.ata_db_name,
+        )
+        LOG.info("ATA guard enabled for spectrums: %s", settings.ata_guard_spectrums)
+
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
@@ -161,6 +207,9 @@ def main():
                 )
             except Exception:
                 LOG.exception("Error reconciling source type=%s", source.source_type)
+
+        if ata_reader:
+            _run_ata_guard(ata_reader, zmc_client, spectrum_picker, settings)
 
         # Sleep in small increments so we can respond to signals
         for _ in range(settings.poll_interval_seconds):
