@@ -4,7 +4,7 @@ Each poll, given whether transmitting is allowed (ata_status):
   * In use: make sure every guarded spectrum has a live busy claim covering
     its whole range. Create one if missing; extend it by replacing its grant
     once less than half of HOLD remains.
-  * Not in use: end the busy claims early (replace with an end RELEASE_MARGIN
+  * Not in use: end the busy claims early (replace with an end release_margin
     away) so transmitters are released.
 
 Ended claims are kept, so each busy period stays in ZMS history with its real
@@ -41,8 +41,6 @@ ALL_SPECTRUMS = "*"
 
 # Busy claims older than this are history; must exceed the longest busy period.
 LOOKBACK = datetime.timedelta(days=7)
-# How soon an ended-early claim actually ends.
-RELEASE_MARGIN = datetime.timedelta(minutes=1)
 
 
 @dataclass
@@ -62,9 +60,11 @@ def guard(
     allowed: bool,
     hold: datetime.timedelta,
     priority: int,
+    release_margin: datetime.timedelta,
     now: datetime.datetime | None = None,
 ) -> GuardStats:
-    """Run one guard cycle. spectrum_names may be ["*"] for every spectrum."""
+    """Run one guard cycle. spectrum_names may be ["*"] for every spectrum.
+    release_margin is how soon an ended-early claim actually ends."""
     stats = GuardStats()
     now = now or datetime.datetime.now(datetime.UTC)
 
@@ -85,7 +85,7 @@ def guard(
             elif claim_ended(claim, now):
                 continue
             elif spectrum_id not in guarded_ids or spectrum_id in live:
-                _release(zmc_client, claim, now, stats)
+                _release(zmc_client, claim, now, release_margin, stats)
             else:
                 live[spectrum_id] = claim
         except Exception:
@@ -97,7 +97,7 @@ def guard(
         try:
             if allowed:
                 if claim:
-                    _release(zmc_client, claim, now, stats)
+                    _release(zmc_client, claim, now, release_margin, stats)
             elif claim is None:
                 _create(
                     zmc_client, spectrum, element_id, now, now + hold, priority, stats
@@ -181,13 +181,17 @@ def _extend(
 
 
 def _release(
-    zmc_client: ZmsZmcClient, claim: Claim, now: datetime.datetime, stats: GuardStats
+    zmc_client: ZmsZmcClient,
+    claim: Claim,
+    now: datetime.datetime,
+    margin: datetime.timedelta,
+    stats: GuardStats,
 ) -> None:
-    """End the claim RELEASE_MARGIN from now, unless it already ends sooner."""
-    if _ends_within(claim, now, RELEASE_MARGIN):
+    """End the claim margin from now, unless it already ends sooner."""
+    if _ends_within(claim, now, margin):
         return
     old = claim.grant
-    end = now + RELEASE_MARGIN
+    end = now + margin
     grant = build_grant(
         element_id=old.element_id,
         spectrum_id=str(old.spectrum_id),

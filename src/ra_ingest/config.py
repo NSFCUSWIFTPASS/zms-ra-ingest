@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     ata_guard_priority: int = Field(
         default=1023, ge=-1023, le=1023, description="Busy claim priority"
     )
+    ata_guard_release_seconds: int = Field(
+        default=60,
+        gt=0,
+        description=(
+            "How long after the ATA parks its busy claim ends; leaves ZMC time "
+            "to schedule the shortened replacement grant"
+        ),
+    )
 
     # Email reports (optional)
     report_enabled: bool = Field(

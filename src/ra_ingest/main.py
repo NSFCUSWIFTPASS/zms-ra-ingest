@@ -108,6 +108,9 @@ def _run_ata_guard(
             allowed=allowed,
             hold=datetime.timedelta(minutes=settings.ata_guard_hold_minutes),
             priority=settings.ata_guard_priority,
+            release_margin=datetime.timedelta(
+                seconds=settings.ata_guard_release_seconds
+            ),
         )
         LOG.info(
             "ATA guard done: transmission_allowed=%s created=%d extended=%d "
