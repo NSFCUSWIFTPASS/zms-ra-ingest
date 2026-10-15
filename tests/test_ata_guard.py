@@ -13,11 +13,12 @@ from zmsclient.zmc.v1.models import (
     SpectrumConstraint,
 )
 
-from ra_ingest.ata_guard import EXT_ID_PREFIX, LOOKBACK, RELEASE_MARGIN, guard
+from ra_ingest.ata_guard import EXT_ID_PREFIX, LOOKBACK, guard
 
 UTC = datetime.UTC
 NOW = datetime.datetime(2026, 10, 13, 18, 0, 0, tzinfo=UTC)
 HOLD = datetime.timedelta(minutes=30)
+RELEASE_MARGIN = datetime.timedelta(minutes=1)
 ELEMENT_ID = "elem-1"
 
 
@@ -110,6 +111,7 @@ def _run(zmc, allowed, names=("ISM-915",), spectrums=(ISM, LBAND)):
         allowed=allowed,
         hold=HOLD,
         priority=1023,
+        release_margin=RELEASE_MARGIN,
         now=NOW,
     )
 
