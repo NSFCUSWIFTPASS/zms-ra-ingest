@@ -44,7 +44,7 @@ class OdsSource:
         source_type: str,
         source_name: str,
         url: str,
-        priority: int = 1023,
+        priority: int = 1000,
     ) -> None:
         self._url = url
         self._source_type = source_type

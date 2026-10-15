@@ -109,7 +109,7 @@ def _make_source(observations, *, ods=True, prefix=None, priority=None, lookback
     source.writes_observations = ods
     source.correlate_repushes = ods
     source.claim_lookback = lookback
-    source.priority = priority if priority is not None else (1023 if ods else 900)
+    source.priority = priority if priority is not None else (1000 if ods else 900)
     source.fetch_observations.return_value = observations
     return source
 
@@ -415,8 +415,8 @@ class TestReconcileGrants:
         observation outranks an overlapping calendar block in ZMC."""
         obs = _make_obs(f"{ODS_PREFIX}1")
         zmc = _make_zmc_client(existing_claims=[])
-        _run(zmc, _make_ra_client(), _make_source([obs], priority=1023))
-        assert zmc.create_claim.call_args.kwargs["body"].grant.priority == 1023
+        _run(zmc, _make_ra_client(), _make_source([obs], priority=1000))
+        assert zmc.create_claim.call_args.kwargs["body"].grant.priority == 1000
 
         gobs = _make_obs(f"{GCAL_PREFIX}1", with_target=False)
         gzmc = _make_zmc_client(existing_claims=[])

@@ -118,7 +118,7 @@ class TestOdsSource:
         assert source.ext_id_prefix == "ods-hcro-"
         assert source.protect_started is True
         assert source.writes_observations is True
-        assert source.priority == 1023
+        assert source.priority == 1000
         assert source.correlate_repushes is True
         assert source.claim_lookback == datetime.timedelta(days=2)
 

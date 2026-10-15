@@ -195,7 +195,7 @@ class TestGcalSource:
         assert src.writes_observations is False
         assert src.correlate_repushes is False
         assert src.claim_lookback is None
-        # Below the ODS default (1023) so an observation preempts a calendar block.
+        # Below the ODS default (1000) so an observation preempts a calendar block.
         assert src.priority == 900
 
     def test_priority_is_configurable(self):
