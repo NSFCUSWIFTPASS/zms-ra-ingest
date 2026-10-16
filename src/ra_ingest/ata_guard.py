@@ -225,8 +225,9 @@ def _remove(zmc_client: ZmsZmcClient, claim: Claim, stats: GuardStats) -> None:
 
 
 def _busy_ext_id(spectrum: Spectrum, start: datetime.datetime) -> str:
-    """One ext_id per busy period, e.g. ata-busy-<spectrum id>-20261016T050000Z."""
-    return f"{EXT_ID_PREFIX}{spectrum.id}-{start:%Y%m%dT%H%M%SZ}"
+    """One ext_id per busy period, e.g. ata-busy-ISM-915-20261016T184514Z."""
+    name = spectrum.name.replace(" ", "-")
+    return f"{EXT_ID_PREFIX}{name}-{start:%Y%m%dT%H%M%SZ}"
 
 
 def _busy_grant(
