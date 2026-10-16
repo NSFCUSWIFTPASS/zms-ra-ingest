@@ -133,7 +133,7 @@ class TestInUse:
 
         assert stats.created == 1
         body = zmc.create_claim.call_args.kwargs["body"]
-        assert body.ext_id == f"{EXT_ID_PREFIX}spec-ism-20261013T180000Z"
+        assert body.ext_id == f"{EXT_ID_PREFIX}ISM-915-20261013T180000Z"
         grant = body.grant
         assert grant.spectrum_id == "spec-ism"
         assert grant.priority == 1023
@@ -260,6 +260,11 @@ class TestSpectrumSelection:
         stats = _run(zmc, allowed=False, names=("*",))
 
         assert stats.created == 2
+        ext_ids = {c.kwargs["body"].ext_id for c in zmc.create_claim.call_args_list}
+        assert ext_ids == {
+            f"{EXT_ID_PREFIX}ISM-915-20261013T180000Z",
+            f"{EXT_ID_PREFIX}ATA-L-band-20261013T180000Z",
+        }
 
     def test_unknown_spectrum_is_skipped(self):
         zmc = _zmc()
