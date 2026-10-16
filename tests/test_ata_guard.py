@@ -65,7 +65,7 @@ def _claim(spectrum_id, start_offset_min=-10, end_offset_min=20, denied=False):
     g.id = f"grant-{spectrum_id}"
     c = Claim(
         element_id=ELEMENT_ID,
-        ext_id=f"{EXT_ID_PREFIX}{spectrum_id}",
+        ext_id=f"{EXT_ID_PREFIX}{spectrum_id}-{g.starts_at:%Y%m%dT%H%M%SZ}",
         type="ata-status",
         source="ata",
         name="busy",
@@ -89,6 +89,15 @@ def _zmc(claims=()):
     client.create_claim.return_value = MagicMock(
         is_success=True, parsed=created, status_code=201
     )
+    taken = {c.ext_id for c in claims}
+
+    def create_claim(body, **_):
+        # Like ZMC: a claim whose ext_id is taken is refused.
+        if body.ext_id in taken:
+            return MagicMock(is_success=False, status_code=409)
+        return client.create_claim.return_value
+
+    client.create_claim.side_effect = create_claim
     client.replace_grant.return_value = MagicMock(
         is_success=True, parsed=MagicMock(id="new-grant"), status_code=201
     )
@@ -102,7 +111,7 @@ def _picker(*spectrums):
     return picker
 
 
-def _run(zmc, allowed, names=("ISM-915",), spectrums=(ISM, LBAND)):
+def _run(zmc, allowed, names=("ISM-915",), spectrums=(ISM, LBAND), now=NOW):
     return guard(
         zmc,
         ELEMENT_ID,
@@ -112,7 +121,7 @@ def _run(zmc, allowed, names=("ISM-915",), spectrums=(ISM, LBAND)):
         hold=HOLD,
         priority=1023,
         release_margin=RELEASE_MARGIN,
-        now=NOW,
+        now=now,
     )
 
 
@@ -124,7 +133,7 @@ class TestInUse:
 
         assert stats.created == 1
         body = zmc.create_claim.call_args.kwargs["body"]
-        assert body.ext_id == f"{EXT_ID_PREFIX}spec-ism"
+        assert body.ext_id == f"{EXT_ID_PREFIX}spec-ism-20261013T180000Z"
         grant = body.grant
         assert grant.spectrum_id == "spec-ism"
         assert grant.priority == 1023
@@ -168,6 +177,7 @@ class TestInUse:
         assert stats.extended == 1
         kwargs = zmc.replace_grant.call_args.kwargs
         assert kwargs["grant_id"] == "grant-spec-ism"
+        assert kwargs["body"].ext_id == claim.ext_id
         assert kwargs["body"].starts_at == claim.grant.starts_at
         assert kwargs["body"].expires_at == NOW + HOLD
 
@@ -180,6 +190,17 @@ class TestInUse:
         assert (stats.released, stats.removed) == (0, 0)
         zmc.delete_claim.assert_not_called()
         zmc.replace_grant.assert_not_called()
+
+    def test_next_busy_period_gets_its_own_claim(self):
+        first = _zmc()
+        _run(first, allowed=False)
+        ended = _claim("spec-ism", start_offset_min=0, end_offset_min=60)
+        ended.ext_id = first.create_claim.call_args.kwargs["body"].ext_id
+        zmc = _zmc([ended])
+
+        stats = _run(zmc, allowed=False, now=NOW + datetime.timedelta(hours=2))
+
+        assert (stats.created, stats.errors) == (1, 0)
 
     def test_denied_claim_is_deleted_and_recreated(self):
         zmc = _zmc([_claim("spec-ism", denied=True)])
@@ -210,6 +231,7 @@ class TestNotInUse:
         assert stats.released == 1
         kwargs = zmc.replace_grant.call_args.kwargs
         assert kwargs["grant_id"] == "grant-spec-ism"
+        assert kwargs["body"].ext_id == claim.ext_id
         assert kwargs["body"].starts_at == claim.grant.starts_at
         assert kwargs["body"].expires_at == NOW + RELEASE_MARGIN
         zmc.delete_claim.assert_not_called()

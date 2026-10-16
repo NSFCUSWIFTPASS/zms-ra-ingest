@@ -8,7 +8,8 @@ Each poll, given whether transmitting is allowed (ata_status):
     away) so transmitters are released.
 
 Ended claims are kept, so each busy period stays in ZMS history with its real
-start and end. Denied claims protected nothing and are deleted.
+start and end. ZMC refuses a claim whose ext_id is taken, so each busy period's
+ext_id includes its start. Denied claims protected nothing and are deleted.
 
 Claims always end within HOLD, so if this service stops, protection lapses on
 its own instead of blocking transmitters forever. ZMS is the only state.
@@ -142,7 +143,8 @@ def _create(
     priority: int,
     stats: GuardStats,
 ) -> None:
-    grant = _busy_grant(spectrum, element_id, start, end, priority)
+    ext_id = _busy_ext_id(spectrum, start)
+    grant = _busy_grant(spectrum, element_id, ext_id, start, end, priority)
     created = create_claim(zmc_client, build_claim(grant, "ata-status", "ata"))
     if created is None:
         stats.errors += 1
@@ -166,7 +168,9 @@ def _extend(
     priority: int,
     stats: GuardStats,
 ) -> None:
-    grant = _busy_grant(spectrum, element_id, claim.grant.starts_at, end, priority)
+    grant = _busy_grant(
+        spectrum, element_id, claim.ext_id, claim.grant.starts_at, end, priority
+    )
     replacement = replace_grant(zmc_client, claim, grant)
     if replacement is None:
         stats.errors += 1
@@ -220,9 +224,15 @@ def _remove(zmc_client: ZmsZmcClient, claim: Claim, stats: GuardStats) -> None:
         stats.errors += 1
 
 
+def _busy_ext_id(spectrum: Spectrum, start: datetime.datetime) -> str:
+    """One ext_id per busy period, e.g. ata-busy-<spectrum id>-20261016T050000Z."""
+    return f"{EXT_ID_PREFIX}{spectrum.id}-{start:%Y%m%dT%H%M%SZ}"
+
+
 def _busy_grant(
     spectrum: Spectrum,
     element_id: str,
+    ext_id: str,
     start: datetime.datetime,
     end: datetime.datetime,
     priority: int,
@@ -231,7 +241,7 @@ def _busy_grant(
     return build_grant(
         element_id=element_id,
         spectrum_id=str(spectrum.id),
-        ext_id=f"{EXT_ID_PREFIX}{spectrum.id}",
+        ext_id=ext_id,
         name=f"ATA in use ({spectrum.name})",
         description="Held while the ATA is observing, from its antenna status.",
         priority=priority,
