@@ -3,7 +3,12 @@
 import datetime
 from unittest.mock import MagicMock, patch
 
-from ra_ingest.ata_status import AntennaRow, AtaStatusReader, transmission_allowed
+from ra_ingest.ata_status import (
+    AntennaRow,
+    AtaStatusReader,
+    describe_in_use,
+    transmission_allowed,
+)
 
 NOW = datetime.datetime(2026, 10, 13, 18, 0, 0)
 
@@ -84,3 +89,10 @@ class TestAtaStatusReader:
         mock_connect.return_value.cursor.return_value.__enter__.return_value = cursor
 
         assert self._reader().transmission_allowed() is False
+
+
+class TestDescribeInUse:
+    def test_groups_antennas_by_source(self):
+        rows = [_row("2a", "3c286"), _row("4e", "casa"), _row("1b", "3c286")]
+
+        assert describe_in_use(rows) == "3c286 on 1b, 2a; casa on 4e"

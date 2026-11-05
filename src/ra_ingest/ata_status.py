@@ -58,11 +58,21 @@ def transmission_allowed(rows: list[AntennaRow], now: datetime.datetime) -> bool
         )
         return False
 
-    in_use = sorted(a for a, r in newest.items() if r.source not in PARKED_SOURCES)
+    in_use = [r for r in newest.values() if r.source not in PARKED_SOURCES]
     if in_use:
-        LOG.info("ATA in use: %s", ", ".join(in_use))
+        LOG.info("ATA in use (%d): %s", len(in_use), describe_in_use(in_use))
         return False
     return True
+
+
+def describe_in_use(rows: list[AntennaRow]) -> str:
+    """The antennas grouped by source, for the log, e.g. "3c286 on 1b, 1c; casa on 4e"."""
+    by_source: dict[str, list[str]] = {}
+    for row in sorted(rows, key=lambda r: r.ant):
+        by_source.setdefault(row.source, []).append(row.ant)
+    return "; ".join(
+        f"{src} on {', '.join(ants)}" for src, ants in sorted(by_source.items())
+    )
 
 
 class AtaStatusReader:
